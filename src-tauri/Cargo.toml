@@ -1,0 +1,31 @@
+[package]
+name = "aeropulse-ng"
+version = "2.4.0"
+description = "AeroPulse-NG Tactical Radar & Airspace Surveillance Engine"
+authors = ["Garba"]
+edition = "2021"
+rust-version = "1.77"
+default-run = "aeropulse-ng"
+
+[features]
+default = ["tauri-host"]
+tauri-host = ["dep:tauri", "dep:tauri-build"]
+
+[build-dependencies]
+tauri-build = { version = "^2.0", optional = true, features = [] }
+
+[dependencies]
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tauri = { version = "^2.0", optional = true, features = [] }
+tokio = { version = "1.53.1", features = ["full"] }
+thiserror = "2.0.16"
+rand = "0.9.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

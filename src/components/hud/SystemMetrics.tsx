@@ -1,0 +1,148 @@
+/**
+ * Display 2 Panel C — SDR hardware diagnostics: live FFT spectrum plot for
+ * the 1090 MHz channel, EKF latency gauge against the 2.0 ms budget and
+ * DuckDB write-rate telemetry.
+ *
+ * The spectrum is synthesised from the live message-rate amplitude with a
+ * deterministic noise floor shaped around the centre spikes — standing in
+ * for the RF tap until the libusb FFT stage lands on the ingestion path.
+ */
+import { useEffect, useRef } from "react";
+import { getSnapshot, useTelemetry } from "../../hooks/useFlightTracks";
+
+const BINS = 128;
+const NOISE_SEED = 0x5eed_1090;
+
+function pseudoNoise(i: number, t: number): number {
+  let x = (NOISE_SEED ^ (i * 2654435761) ^ Math.floor(t)) >>> 0;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  return ((x >>> 0) / 4294967295) * 2 - 1;
+}
+
+export default function SystemMetrics() {
+  const snap = useTelemetry(4);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const status = snap?.status;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let raf = 0;
+    const draw = (): void => {
+      const dpr = window.devicePixelRatio || 1;
+      const wCss = canvas.clientWidth;
+      const hCss = canvas.clientHeight || 120;
+      if (canvas.width !== Math.round(wCss * dpr)) canvas.width = Math.round(wCss * dpr);
+      if (canvas.height !== Math.round(hCss * dpr))
+        canvas.height = Math.round(hCss * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      ctx.fillStyle = "#0B0E14";
+      ctx.fillRect(0, 0, wCss, hCss);
+
+      // Grid.
+      ctx.strokeStyle = "rgba(42,50,65,0.6)";
+      ctx.beginPath();
+      for (let gx = 0; gx <= wCss; gx += wCss / 8) {
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, hCss);
+      }
+      ctx.stroke();
+
+      const s = getSnapshot();
+      const msgRate = s?.status.hardware[0]?.messages_per_second ?? 0;
+      const online = s?.status.hardware[0]?.online ?? false;
+      const tSec = Date.now() / 120;
+
+      ctx.strokeStyle = online ? "#00FF66" : "#FF1744";
+      ctx.beginPath();
+      for (let i = 0; i < BINS; i++) {
+        const frac = i / (BINS - 1);
+        // Two spectral peaks: ADS-B at ~78% span, ACARS low band shoulder.
+        const peak1 =
+          Math.exp(-Math.pow((frac - 0.78) * 26, 2)) * (0.35 + Math.min(0.45, msgRate / 900));
+        const peak2 =
+          Math.exp(-Math.pow((frac - 0.12) * 34, 2)) * (0.08 + Math.min(0.12, msgRate / 2400));
+        const floorDb = -88 + pseudoNoise(i, tSec) * 3.2 + (peak1 + peak2) * 46;
+        const y = hCss - ((floorDb + 100) / 100) * hCss;
+        const x = frac * wCss;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Centre-frequency annotations.
+      ctx.fillStyle = "#6B7689";
+      ctx.font = "9px JetBrains Mono, monospace";
+      ctx.fillText("131.550", wCss * 0.12 - 20, hCss - 4);
+      ctx.fillText("1090 MHz", wCss * 0.78 - 24, hCss - 4);
+
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const latencyUs = status?.ekf_latency_us ?? 0;
+  const latencyBudget = 2000; // spec ceiling
+  const latFrac = Math.min(1, latencyUs / latencyBudget);
+  const latClass = latFrac > 0.85 ? "crit" : latFrac > 0.55 ? "warn" : "";
+
+  return (
+    <div className="panel">
+      <h2>SDR HARDWARE & SYSTEM DIAGNOSTICS</h2>
+
+      {(status?.hardware ?? []).map((h) => (
+        <div key={h.channel_id} style={{ display: "flex", gap: 8, fontSize: 11 }}>
+          <span className={`dot ${h.online ? "ok" : "down"}`} style={{ marginTop: 4 }} />
+          <span style={{ width: 54 }}>{h.channel_id}</span>
+          <span style={{ flex: 1 }}>{h.role}</span>
+          <span style={{ color: "var(--ap-text-dim)" }}>
+            {h.online ? `${h.messages_per_second.toFixed(0)} msg/s` : "offline"}
+          </span>
+        </div>
+      ))}
+
+      <canvas ref={canvasRef} style={{ width: "100%", height: 110, marginTop: 8 }} />
+
+      <div className="gauge-row">
+        <span style={{ width: 130 }}>EKF LATENCY</span>
+        <div className={`gauge-bar ${latClass}`}>
+          <div style={{ width: `${latFrac * 100}%` }} />
+        </div>
+        <span style={{ width: 70, textAlign: "right" }}>
+          {latencyUs.toFixed(0)} µs / 2.0ms
+        </span>
+      </div>
+
+      <div className="gauge-row">
+        <span style={{ width: 130 }}>DUCKDB WRITES</span>
+        <div className="gauge-bar">
+          <div style={{ width: `${Math.min(100, (status?.duckdb_writes_per_sec ?? 0) / 3)}%` }} />
+        </div>
+        <span style={{ width: 70, textAlign: "right" }}>
+          {(status?.duckdb_writes_per_sec ?? 0).toFixed(0)} req/s
+        </span>
+      </div>
+
+      <div className="gauge-row">
+        <span style={{ width: 130 }}>TRACKS / STCA</span>
+        <div className="gauge-bar">
+          <div
+            style={{
+              width: `${Math.min(100, ((status?.tracks_total ?? 0) / 60) * 100)}%`,
+            }}
+          />
+        </div>
+        <span style={{ width: 70, textAlign: "right" }}>
+          {status?.tracks_total ?? 0} · {status?.stca_pairs_active ?? 0}
+        </span>
+      </div>
+    </div>
+  );
+}

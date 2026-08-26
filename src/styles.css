@@ -1,0 +1,335 @@
+:root {
+  --ap-bg: #0b0e14;
+  --ap-panel: #10141d;
+  --ap-panel-raised: #151b26;
+  --ap-grid: #2a3241;
+  --ap-text: #c8d2e0;
+  --ap-text-dim: #6b7689;
+  --ap-civil: #00ff66;
+  --ap-military: #7c4dff;
+  --ap-unknown: #ffb300;
+  --ap-alert: #ff1744;
+  --ap-ok: #00e5a0;
+  --ap-font: "JetBrains Mono", "DIN 1451", "Roboto Mono", ui-monospace, monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: var(--ap-bg);
+  color: var(--ap-text);
+  font-family: var(--ap-font);
+  font-size: 12px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Zero-gloss matte finish per HF-STD-010A */
+button,
+select,
+input {
+  background: var(--ap-panel-raised);
+  border: 1px solid var(--ap-grid);
+  color: var(--ap-text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+}
+
+button:hover {
+  border-color: var(--ap-civil);
+  cursor: pointer;
+}
+
+button.active {
+  border-color: var(--ap-civil);
+  color: var(--ap-civil);
+}
+
+/* ---- Master command bar (Screen 0) ---- */
+
+.command-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--ap-panel);
+  border-bottom: 1px solid var(--ap-grid);
+  user-select: none;
+}
+
+.command-bar .product-id {
+  letter-spacing: 1px;
+  color: var(--ap-civil);
+  white-space: nowrap;
+}
+
+.command-bar .product-id .sub {
+  color: var(--ap-text-dim);
+  margin-left: 8px;
+}
+
+.status-cluster {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--ap-grid);
+  white-space: nowrap;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dot.ok { background: var(--ap-ok); }
+.dot.down { background: var(--ap-alert); animation: blink 1s steps(2) infinite; }
+
+@keyframes blink {
+  50% { opacity: 0.25; }
+}
+
+.clock-block {
+  text-align: right;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.clock-block .zulu {
+  color: var(--ap-civil);
+  font-weight: bold;
+}
+
+.emergency-btn {
+  border-color: var(--ap-alert) !important;
+  color: var(--ap-alert) !important;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.emergency-btn.armed {
+  background: var(--ap-alert);
+  color: #fff !important;
+  animation: blink 1s steps(2) infinite;
+}
+
+/* ---- Layout scaffolds ---- */
+
+.radar-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.radar-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.radar-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 5;
+  background: rgba(16, 20, 29, 0.92);
+  border: 1px solid var(--ap-grid);
+  padding: 6px;
+}
+
+.hud-root {
+  display: grid;
+  grid-template-rows: 40px 1fr;
+  height: 100%;
+}
+
+.hud-body {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  grid-template-rows: 1.4fr 1fr;
+  gap: 1px;
+  background: var(--ap-grid);
+  min-height: 0;
+}
+
+.panel {
+  background: var(--ap-bg);
+  padding: 8px 10px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.panel h2 {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--ap-text-dim);
+  margin-bottom: 6px;
+  font-weight: normal;
+}
+
+/* ---- Flight data strips ---- */
+
+.strip-bay {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: 4px 90px 70px 60px 55px 55px 1fr;
+  align-items: center;
+  gap: 6px;
+  background: var(--ap-panel);
+  border: 1px solid var(--ap-grid);
+  padding: 3px 6px 3px 0;
+  font-size: 11px;
+}
+
+.strip .edge {
+  width: 4px;
+  height: 100%;
+  min-height: 18px;
+}
+
+.edge.standard { background: var(--ap-civil); }
+.edge.priority { background: var(--ap-unknown); }
+.edge.emergency { background: var(--ap-alert); animation: blink 1s steps(2) infinite; }
+
+.bay-title {
+  margin: 8px 0 4px;
+  color: var(--ap-text-dim);
+  letter-spacing: 2px;
+  font-size: 10px;
+}
+
+/* ---- Weather HUD ---- */
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+.kv {
+  border: 1px solid var(--ap-grid);
+  padding: 6px 8px;
+  background: var(--ap-panel);
+}
+
+.kv .k {
+  color: var(--ap-text-dim);
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.kv .v {
+  font-size: 16px;
+  margin-top: 2px;
+  color: var(--ap-civil);
+}
+
+.upper-air-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.upper-air-table th,
+.upper-air-table td {
+  border-bottom: 1px solid var(--ap-grid);
+  padding: 3px 6px;
+  text-align: right;
+}
+
+.upper-air-table th {
+  color: var(--ap-text-dim);
+  font-weight: normal;
+  text-align: right;
+}
+
+.raw-text-feed {
+  white-space: pre-wrap;
+  color: var(--ap-text-dim);
+  font-size: 10px;
+  max-height: 64px;
+  overflow: auto;
+}
+
+/* ---- Diagnostics ---- */
+
+.gauge-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.gauge-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--ap-panel-raised);
+  border: 1px solid var(--ap-grid);
+  position: relative;
+}
+
+.gauge-bar > div {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ap-civil);
+}
+
+.gauge-bar.warn > div { background: var(--ap-unknown); }
+.gauge-bar.crit > div { background: var(--ap-alert); }
+
+/* ---- Threat matrix / intercept ---- */
+
+.threat-row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ap-grid);
+  padding: 4px 0;
+  font-size: 11px;
+}
+
+.intercept-result {
+  border: 1px solid var(--ap-grid);
+  padding: 8px;
+  margin-top: 8px;
+  background: var(--ap-panel);
+}
+
+.intercept-result .big {
+  font-size: 20px;
+  color: var(--ap-military);
+}
+
+.infeasible { color: var(--ap-alert) !important; }

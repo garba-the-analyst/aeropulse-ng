@@ -1,0 +1,25 @@
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Python
+python-sidecar/venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local runtime artifacts
+*.duckdb
+*.duckdb.wal
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,31 @@
+{
+  "name": "aeropulse-ng",
+  "version": "2.4.0",
+  "type": "module",
+  "private": true,
+  "description": "AeroPulse-NG Tactical Radar & Airspace Surveillance Engine",
+  "scripts": {
+    "dev": "vite -c src/vite.config.ts",
+    "build": "tsc --noEmit -p src && vite build -c src/vite.config.ts",
+    "preview": "vite preview -c src/vite.config.ts",
+    "typecheck": "tsc --noEmit -p src",
+    "tauri": "tauri",
+    "engine:test": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "sidecar:test": "cd python-sidecar && venv/bin/python -m pytest tests -q"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "lucide-react": "^1.34.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^26.3.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
