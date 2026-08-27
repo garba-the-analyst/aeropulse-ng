@@ -3,6 +3,7 @@ import FlightStripTable from "./components/hud/FlightStripTable";
 import WeatherGridHUD from "./components/hud/WeatherGridHUD";
 import SystemMetrics from "./components/hud/SystemMetrics";
 import ThreatMatrix from "./components/defense/ThreatMatrix";
+import AudioRoutingPanel from "./components/comms/AudioRoutingPanel";
 
 export default function HudApp() {
   return (
