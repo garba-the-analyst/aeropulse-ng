@@ -30,8 +30,8 @@ export default function MasterCommandBar({ rangeKm, onRangeChange, showEmergency
   }, []);
 
   const hw = snap?.status.hardware ?? [];
-  const ekfOk = snap?.status.ekf_active ?? false;
-  const awosOk = snap?.status.sidecar_online ?? true; // demo feed implies mast
+  const trackingOk = snap?.status.ekf_active ?? false;
+  const weatherOk = snap?.status.sidecar_online ?? true;
   const armed = Date.now() < armedUntil;
 
   async function fireEmergency(): Promise<void> {
@@ -42,43 +42,42 @@ export default function MasterCommandBar({ rangeKm, onRangeChange, showEmergency
   return (
     <div className="command-bar">
       <div className="product-id">
-        AeroPulse-NG v2.4
-        <span className="sub">| TACTICAL SURVEILLANCE ENGINE</span>
+        AeroPulse-NG <span className="sub">Air Surveillance System</span>
       </div>
 
       <div className="status-cluster">
         {hw.map((h) => (
           <span className="chip" key={h.channel_id}>
             <span className={`dot ${h.online ? "ok" : "down"}`} />
-            {h.channel_id}: {h.role} {h.online ? "OK" : "DOWN"}
+            {h.channel_id === "SDR-1" ? "Primary Surveillance" : h.channel_id === "SDR-2" ? "Secondary Surveillance" : h.role} — {h.online ? "Active" : "Offline"}
           </span>
         ))}
         <span className="chip">
-          <span className={`dot ${awosOk ? "ok" : "down"}`} />
-          AWOS: RS-485 {awosOk ? "OK" : "SIM"}
+          <span className={`dot ${weatherOk ? "ok" : "down"}`} />
+          Surface Weather — {weatherOk ? "Active" : "Standby"}
         </span>
         <span className="chip">
-          <span className={`dot ${ekfOk ? "ok" : "down"}`} />
-          EKF ENGINE: {ekfOk ? "ACTIVE" : "INIT"}
+          <span className={`dot ${trackingOk ? "ok" : "down"}`} />
+          Aircraft Tracking — {trackingOk ? "Active" : "Starting"}
         </span>
       </div>
 
       <div className="status-cluster">
         <select
-          aria-label="Range scale"
+          aria-label="Display range"
           value={rangeKm}
           onChange={(e) => onRangeChange(Number(e.target.value))}
         >
           {RANGE_OPTIONS_KM.map((r) => (
             <option key={r} value={r}>
-              {r} KM
+              {r} km
             </option>
           ))}
         </select>
 
         <div className="clock-block">
           <div className="zulu">{zulu(now)}</div>
-          <div>{wat(now)}</div>
+          <div className="wat">{wat(now)}</div>
         </div>
 
         {showEmergency && (
@@ -86,7 +85,7 @@ export default function MasterCommandBar({ rangeKm, onRangeChange, showEmergency
             className={`emergency-btn ${armed ? "armed" : ""}`}
             onClick={() => void fireEmergency()}
           >
-            {armed ? "EMERGENCY ARMED" : "EMERG 7700"}
+            {armed ? "Emergency Active" : "Declare Emergency"}
           </button>
         )}
       </div>

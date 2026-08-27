@@ -17,7 +17,10 @@ export async function invokeSafe<T>(cmd: string, args?: Record<string, unknown>)
 }
 
 export async function openOpsHud(): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    window.open("/hud.html", "_blank", "width=1280,height=860");
+    return;
+  }
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const existing = await WebviewWindow.getByLabel("ops_hud");
@@ -33,5 +36,6 @@ export async function openOpsHud(): Promise<void> {
     }
   } catch (err) {
     console.warn("[ipc] ops_hud open failed", err);
+    window.open("/hud.html", "_blank", "width=1280,height=860");
   }
 }

@@ -27,24 +27,33 @@ export default function App() {
           <button
             className={tool === "ruler" ? "active" : ""}
             onClick={() => setTool(tool === "ruler" ? "none" : "ruler")}
-            title="Range & Bearing ruler"
+            title="Measure distance and bearing between points — click to set start, move to measure, double-click to clear"
           >
-            R&B RULER
+            {tool === "ruler" ? "Measuring — Click Again" : "Measure Distance"}
           </button>
-          <button onClick={() => void openOpsHud()} title="Open Display 2">
-            OPS HUD
+          <button onClick={() => void openOpsHud()} title="Open operations display in new window">
+            Operations Display
           </button>
           <span
             style={{
-              color: stcaCount > 0 ? "var(--ap-alert)" : "var(--ap-text-dim)",
-              fontWeight: stcaCount > 0 ? "bold" : "normal",
-              animation: stcaCount > 0 ? "blink 1s steps(2) infinite" : undefined,
-              padding: "4px 2px",
+              color: stcaCount > 0 ? "var(--ap-critical)" : "var(--ap-text-dim)",
+              fontWeight: stcaCount > 0 ? "600" : "400",
+              fontFamily: "var(--ap-font-mono)",
+              fontSize: "12px",
+              padding: "6px 8px",
+              border: "1px solid var(--ap-border)",
+              borderRadius: "4px",
+              background: stcaCount > 0 ? "rgba(229,72,77,0.1)" : "transparent",
             }}
           >
-            STCA {stcaCount}
+            {stcaCount === 0 ? "No Conflicts" : `${stcaCount} Conflict${stcaCount > 1 ? "s" : ""}`}
           </span>
         </div>
+        {tool === "ruler" && (
+          <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", background: "var(--ap-panel)", border: "1px solid var(--ap-border)", borderRadius: "4px", padding: "6px 12px", fontSize: "11px", color: "var(--ap-text-secondary)", zIndex: 5 }}>
+            Click on the radar to set start point — move cursor to measure — double-click to clear
+          </div>
+        )}
 
         <RadarCanvas rangeKm={rangeKm} rulerMode={tool === "ruler"} />
 

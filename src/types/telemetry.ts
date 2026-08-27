@@ -103,14 +103,14 @@ export interface EngineSnapshot {
   status: EngineStatus;
 }
 
-/** HF-STD-010A / MIL-STD-2525D symbology palette. */
+/** Restrained operational palette — uniform, high-contrast, low glare. */
 export const SYMBOLOGY = {
-  background: "#0B0E14",
-  grid: "#2A3241",
-  civil: "#00FF66",
-  military: "#7C4DFF",
-  unknown: "#FFB300",
-  alert: "#FF1744",
+  background: "#070C1B",
+  grid: "#1E344D",
+  civil: "#22C55E",
+  military: "#60A5FA",
+  unknown: "#D9A441",
+  alert: "#E5484D",
 } as const;
 
 export function trackColor(t: Track): string {

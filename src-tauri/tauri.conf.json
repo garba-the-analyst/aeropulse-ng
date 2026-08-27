@@ -17,6 +17,8 @@
         "url": "/index.html",
         "width": 1400,
         "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
         "resizable": true,
         "fullscreen": false
       },
@@ -24,8 +26,10 @@
         "label": "ops_hud",
         "title": "AeroPulse-NG :: Operations & Weather HUD",
         "url": "/hud.html",
-        "width": 1000,
-        "height": 700,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
         "resizable": true,
         "visible": true
       }

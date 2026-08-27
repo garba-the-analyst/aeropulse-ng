@@ -15,17 +15,17 @@ export default function ThreatMatrix() {
     if (t.alert !== "none") {
       rows.push({
         icao24: t.icao24,
-        label: `${t.callsign} · SQK ${t.squawk}`,
+        label: `${t.callsign} — Squawk ${t.squawk}`,
         reason:
           t.alert === "emergency"
-            ? "GENERAL EMERGENCY (7700)"
+            ? "Emergency declared"
             : t.alert === "radio_failure"
-              ? "RADIO FAILURE (7600)"
+              ? "Radio failure"
               : t.alert === "hijack"
-                ? "UNLAWFUL INTERFERENCE (7500)"
+                ? "Security alert"
                 : t.alert === "dark_target"
-                  ? "DARK TARGET / NO IDENTITY"
-                  : "GEOFENCE BREACH",
+                  ? "Aircraft without identification"
+                  : "Restricted airspace entered",
       });
     }
   }
@@ -36,16 +36,16 @@ export default function ThreatMatrix() {
 
   return (
     <div className="panel">
-      <h2>THREAT MATRIX</h2>
+      <h2>Active Alerts</h2>
       {rows.length === 0 && (
-        <div style={{ color: "var(--ap-text-dim)" }}>— nominal airspace —</div>
+        <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No active alerts — Airspace is clear</div>
       )}
       {rows.map((r) => (
         <div className="threat-row" key={r.icao24}>
-          <span style={{ color: "var(--ap-alert)", fontWeight: "bold" }}>
+          <span style={{ color: "var(--ap-critical)", fontWeight: "600", fontFamily: "var(--ap-font-mono)", fontSize: "11px" }}>
             {r.label}
           </span>
-          <span style={{ color: "var(--ap-text-dim)" }}>{r.reason}</span>
+          <span style={{ color: "var(--ap-text-secondary)", fontSize: "11px" }}>{r.reason}</span>
         </div>
       ))}
     </div>
@@ -90,12 +90,13 @@ export function InterceptPanel() {
       if (brg < 0) brg += 360;
       const rangeNm =
         Math.hypot(dLat * 60.04, dLon * 60.04 * Math.cos((itc.latitude * Math.PI) / 180));
+      const rangeKm = rangeNm * 1.852;
       setResult({
         target_icao24: target,
         interceptor_icao24: interceptor,
         intercept_heading_deg: brg,
-        required_speed_kt: speed,
-        time_to_intercept_s: (rangeNm / Math.max(1, speed)) * 3600,
+        required_speed_kt: speed / 1.852,
+        time_to_intercept_s: (rangeKm / Math.max(1, speed)) * 3600,
         initial_bearing_deg: brg,
         range_nm: rangeNm,
         feasible: true,
@@ -104,20 +105,20 @@ export function InterceptPanel() {
   }
 
   return (
-    <div className="panel" style={{ background: "rgba(16,20,29,0.92)" }}>
-      <h2>TACTICAL INTERCEPT CALCULATOR</h2>
+    <div className="panel" style={{ background: "var(--ap-panel)", border: "1px solid var(--ap-border)" }}>
+      <h2>Intercept Guidance</h2>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <select value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">— TARGET —</option>
+          <option value="">Select aircraft to intercept</option>
           {options}
         </select>
         <select value={interceptor} onChange={(e) => setInterceptor(e.target.value)}>
-          <option value="">— INTERCEPTOR —</option>
+          <option value="">Select intercepting aircraft</option>
           {options}
         </select>
-        <label style={{ color: "var(--ap-text-dim)", fontSize: 10 }}>
-          QRA GROUND SPEED (km/h)
+        <label style={{ color: "var(--ap-text-dim)", fontSize: "11px", fontWeight: 500 }}>
+          Required Speed (km/h)
           <input
             type="number"
             min={120}
@@ -128,27 +129,28 @@ export function InterceptPanel() {
             style={{ width: "100%", marginTop: 2 }}
           />
         </label>
-        <button onClick={() => void solve()}>COMPUTE INTERCEPT VECTOR</button>
+        <button onClick={() => void solve()} disabled={!target || !interceptor} title={!target || !interceptor ? "Select both aircraft first" : "Calculate intercept vector"}>
+          Calculate Intercept
+        </button>
       </div>
 
       {result && (
         <div className="intercept-result">
-          <div style={{ color: "var(--ap-text-dim)", fontSize: 10 }}>REQUIRED HEADING</div>
+          <div style={{ color: "var(--ap-text-dim)", fontSize: "11px", fontWeight: 500 }}>Required Heading</div>
           <div className={`big ${result.feasible ? "" : "infeasible"}`}>
-            {result.intercept_heading_deg.toFixed(0)}°T
+            {result.intercept_heading_deg.toFixed(0)}°
           </div>
-          <div style={{ marginTop: 6, lineHeight: 1.5 }}>
-            SPEED {(result.required_speed_kt * 1.852).toFixed(0)} km/h · RANGE{" "}
-            {(result.range_nm * 1.852).toFixed(1)} KM
+          <div style={{ marginTop: 8, lineHeight: 1.6, fontSize: "12px" }}>
+            Speed {(result.required_speed_kt * 1.852).toFixed(0)} km/h · Distance{" "}
+            {(result.range_nm * 1.852).toFixed(1)} km
             <br />
-            TTI{" "}
+            Estimated time{" "}
             {Number.isFinite(result.time_to_intercept_s)
-              ? `${Math.round(result.time_to_intercept_s / 60)} min`
+              ? `${Math.round(result.time_to_intercept_s / 60)} minutes`
               : "—"}
             <br />
-            STATUS:{" "}
-            <span style={{ color: result.feasible ? "var(--ap-ok)" : "var(--ap-alert)" }}>
-              {result.feasible ? "FEASIBLE" : "NO INTERCEPT SOLUTION"}
+            <span style={{ color: result.feasible ? "var(--ap-success)" : "var(--ap-critical)" }}>
+              {result.feasible ? "Intercept is feasible" : "No intercept solution"}
             </span>
           </div>
         </div>

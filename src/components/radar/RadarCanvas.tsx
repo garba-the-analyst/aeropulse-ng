@@ -108,29 +108,32 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
         cy - (lat - SITE.lat) * pxPerDegLat,
       ];
 
-      // ---- background -------------------------------------------------
-      ctx.fillStyle = SYMBOLOGY.background;
+      // ---- background — uniform deep void --------------------------------
+      ctx.fillStyle = "#070C1B";
       ctx.fillRect(0, 0, wCss, hCss);
 
-      // ---- range rings + crosshair grid -------------------------------
-      ctx.strokeStyle = SYMBOLOGY.grid;
-      ctx.globalAlpha = 0.4;
-      ctx.lineWidth = 1;
+      // ---- range rings + crosshair grid — restrained, uniform ---------
+      ctx.strokeStyle = "rgba(52,71,102,0.5)";
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 0.8;
       for (const km of RANGE_RINGS_KM) {
         if (km >= rangeRef.current) continue;
         ctx.beginPath();
         ctx.arc(cx, cy, km * kmPx, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.fillStyle = "#6B7689";
-        ctx.font = "10px JetBrains Mono, monospace";
-        ctx.fillText(`${km} KM`, cx + 4, cy - km * kmPx - 4);
+        ctx.fillStyle = "#7A8FAE";
+        ctx.font = "10px Inter, system-ui, sans-serif";
+        ctx.fillText(`${km} km`, cx + 6, cy - km * kmPx - 6);
       }
-      // Outer selected-range boundary.
+      // Outer selected-range boundary — slightly stronger
+      ctx.strokeStyle = "rgba(52,71,102,0.7)";
       ctx.beginPath();
       ctx.arc(cx, cy, rangeRef.current * kmPx, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Crosshairs every 25% of radius.
+      // Crosshairs every 25% of radius — very subtle
+      ctx.strokeStyle = "rgba(52,71,102,0.25)";
+      ctx.lineWidth = 0.6;
       ctx.beginPath();
       for (const frac of [-1, -0.5, 0.5, 1]) {
         ctx.moveTo(cx + frac * cx, 0);
@@ -140,7 +143,8 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
       }
       ctx.stroke();
 
-      // Bearing spokes each 30°.
+      // Bearing spokes each 30° — faint
+      ctx.strokeStyle = "rgba(52,71,102,0.2)";
       ctx.beginPath();
       for (let deg = 0; deg < 360; deg += 30) {
         const rad = (deg * Math.PI) / 180;
@@ -151,20 +155,29 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
         );
       }
       ctx.stroke();
-      ctx.globalAlpha = 1;
 
-      // ---- rotating sweep ---------------------------------------------
+      // ---- rotating sweep — subtle ------------------------------------
       const sweepAngle = ((Date.now() % 4000) / 4000) * Math.PI * 2;
       const grad = ctx.createConicGradient?.(sweepAngle, cx, cy);
       if (grad) {
-        grad.addColorStop(0, "rgba(0,255,102,0.16)");
-        grad.addColorStop(0.08, "rgba(0,255,102,0)");
-        grad.addColorStop(1, "rgba(0,255,102,0)");
+        grad.addColorStop(0, "rgba(59,130,246,0.06)");
+        grad.addColorStop(0.12, "rgba(59,130,246,0)");
+        grad.addColorStop(1, "rgba(59,130,246,0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(cx, cy, rangeRef.current * kmPx, 0, Math.PI * 2);
         ctx.fill();
       }
+      // Sweep leading edge — thin, calm
+      ctx.strokeStyle = "rgba(59,130,246,0.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(
+        cx + Math.sin(sweepAngle) * rangeRef.current * kmPx,
+        cy - Math.cos(sweepAngle) * rangeRef.current * kmPx,
+      );
+      ctx.stroke();
 
       // ---- geofences ----------------------------------------------------
       for (const fence of fencesRef.current) {
@@ -282,32 +295,36 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
         }
       }
 
-      // ---- R&B ruler ------------------------------------------------------
+      // ---- Distance and bearing tool --------------------------------------
       if (rulerRef.current && anchorRef.current && cursorRef.current) {
         const { x: ax2, y: ay2 } = anchorRef.current;
         const { x: bx2, y: by2 } = cursorRef.current;
-        ctx.strokeStyle = "#FFFFFF";
+        ctx.strokeStyle = "#E6EDF3";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
         ctx.beginPath();
         ctx.moveTo(ax2, ay2);
         ctx.lineTo(bx2, by2);
         ctx.stroke();
+        ctx.setLineDash([]);
         const dxM = (bx2 - ax2) / pxPerDegLon * lonM;
         const dyM = (ay2 - by2) / pxPerDegLat * latM;
-        const rngNm = Math.hypot(dxM, dyM) / 1852;
+        const distKm = Math.hypot(dxM, dyM) / 1000;
         let brg = Math.atan2(dxM, dyM) * (180 / Math.PI);
         if (brg < 0) brg += 360;
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "11px JetBrains Mono, monospace";
-        ctx.fillText(`R&B ${brg.toFixed(0)}° / ${rngNm.toFixed(1)}NM`, bx2 + 8, by2 - 6);
+        ctx.fillStyle = "#E6EDF3";
+        ctx.font = "11px Inter, system-ui, sans-serif";
+        ctx.fillText(`${brg.toFixed(0)}°  ·  ${distKm.toFixed(1)} km`, bx2 + 8, by2 - 6);
       }
 
-      // ---- site marker ----------------------------------------------------
-      ctx.fillStyle = SYMBOLOGY.civil;
+      // ---- aerodrome marker -----------------------------------------------
+      ctx.fillStyle = "#9CB0C9";
       ctx.beginPath();
       ctx.arc(cx, cy, 3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.font = "10px JetBrains Mono, monospace";
-      ctx.fillText("DNKN", cx + 6, cy + 12);
+      ctx.fillStyle = "#7A8FAE";
+      ctx.font = "10px Inter, system-ui, sans-serif";
+      ctx.fillText("DNKN Aerodrome", cx + 8, cy + 14);
 
       raf = requestAnimationFrame(draw);
     };
@@ -320,9 +337,14 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
     <canvas
       ref={canvasRef}
       className="radar-canvas"
+      style={{ cursor: rulerMode ? "crosshair" : "default" }}
       onClick={(e) => {
         if (!rulerMode) return;
-        anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+        if (!anchorRef.current) {
+          anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+        } else {
+          anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+        }
       }}
       onMouseMove={(e) => {
         cursorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };

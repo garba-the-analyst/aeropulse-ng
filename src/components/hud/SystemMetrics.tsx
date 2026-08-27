@@ -42,11 +42,11 @@ export default function SystemMetrics() {
         canvas.height = Math.round(hCss * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      ctx.fillStyle = "#0B0E14";
+      ctx.fillStyle = "#0F1E32";
       ctx.fillRect(0, 0, wCss, hCss);
 
-      // Grid.
-      ctx.strokeStyle = "rgba(42,50,65,0.6)";
+      // Grid — subtle, uniform
+      ctx.strokeStyle = "rgba(46,74,106,0.35)";
       ctx.beginPath();
       for (let gx = 0; gx <= wCss; gx += wCss / 8) {
         ctx.moveTo(gx, 0);
@@ -59,7 +59,7 @@ export default function SystemMetrics() {
       const online = s?.status.hardware[0]?.online ?? false;
       const tSec = Date.now() / 120;
 
-      ctx.strokeStyle = online ? "#00FF66" : "#FF1744";
+      ctx.strokeStyle = online ? "#22C55E" : "#E5484D";
       ctx.beginPath();
       for (let i = 0; i < BINS; i++) {
         const frac = i / (BINS - 1);
@@ -76,11 +76,11 @@ export default function SystemMetrics() {
       }
       ctx.stroke();
 
-      // Centre-frequency annotations.
-      ctx.fillStyle = "#6B7689";
-      ctx.font = "9px JetBrains Mono, monospace";
-      ctx.fillText("131.550", wCss * 0.12 - 20, hCss - 4);
-      ctx.fillText("1090 MHz", wCss * 0.78 - 24, hCss - 4);
+      // Frequency markers — restrained
+      ctx.fillStyle = "#7A8FAE";
+      ctx.font = "10px Inter, system-ui, sans-serif";
+      ctx.fillText("131.550 MHz", wCss * 0.12 - 22, hCss - 6);
+      ctx.fillText("1 090 MHz", wCss * 0.78 - 24, hCss - 6);
 
       raf = requestAnimationFrame(draw);
     };
@@ -95,43 +95,43 @@ export default function SystemMetrics() {
 
   return (
     <div className="panel">
-      <h2>SDR HARDWARE & SYSTEM DIAGNOSTICS</h2>
+      <h2>System Status</h2>
 
       {(status?.hardware ?? []).map((h) => (
-        <div key={h.channel_id} style={{ display: "flex", gap: 8, fontSize: 11 }}>
-          <span className={`dot ${h.online ? "ok" : "down"}`} style={{ marginTop: 4 }} />
-          <span style={{ width: 54 }}>{h.channel_id}</span>
+        <div key={h.channel_id} style={{ display: "flex", gap: 8, fontSize: "11px", fontFamily: "var(--ap-font-mono)", alignItems: "center" }}>
+          <span className={`dot ${h.online ? "ok" : "down"}`} />
+          <span style={{ width: 56, color: "var(--ap-text-secondary)" }}>{h.channel_id}</span>
           <span style={{ flex: 1 }}>{h.role}</span>
           <span style={{ color: "var(--ap-text-dim)" }}>
-            {h.online ? `${h.messages_per_second.toFixed(0)} msg/s` : "offline"}
+            {h.online ? `${h.messages_per_second.toFixed(0)} messages/sec` : "Offline"}
           </span>
         </div>
       ))}
 
-      <canvas ref={canvasRef} style={{ width: "100%", height: 110, marginTop: 8 }} />
+      <canvas ref={canvasRef} style={{ width: "100%", height: 110, marginTop: 10, borderRadius: "4px", border: "1px solid var(--ap-border)" }} />
 
       <div className="gauge-row">
-        <span style={{ width: 130 }}>EKF LATENCY</span>
+        <span style={{ width: 130 }}>Response Time</span>
         <div className={`gauge-bar ${latClass}`}>
           <div style={{ width: `${latFrac * 100}%` }} />
         </div>
-        <span style={{ width: 70, textAlign: "right" }}>
-          {latencyUs.toFixed(0)} µs / 2.0ms
+        <span style={{ width: 90, textAlign: "right", fontFamily: "var(--ap-font-mono)", fontSize: "11px" }}>
+          {latencyUs.toFixed(0)} µs
         </span>
       </div>
 
       <div className="gauge-row">
-        <span style={{ width: 130 }}>DUCKDB WRITES</span>
+        <span style={{ width: 130 }}>Data Recording</span>
         <div className="gauge-bar">
           <div style={{ width: `${Math.min(100, (status?.duckdb_writes_per_sec ?? 0) / 3)}%` }} />
         </div>
-        <span style={{ width: 70, textAlign: "right" }}>
-          {(status?.duckdb_writes_per_sec ?? 0).toFixed(0)} req/s
+        <span style={{ width: 90, textAlign: "right", fontFamily: "var(--ap-font-mono)", fontSize: "11px" }}>
+          {(status?.duckdb_writes_per_sec ?? 0).toFixed(0)} per sec
         </span>
       </div>
 
       <div className="gauge-row">
-        <span style={{ width: 130 }}>TRACKS / STCA</span>
+        <span style={{ width: 130 }}>Aircraft Tracked</span>
         <div className="gauge-bar">
           <div
             style={{
@@ -139,8 +139,8 @@ export default function SystemMetrics() {
             }}
           />
         </div>
-        <span style={{ width: 70, textAlign: "right" }}>
-          {status?.tracks_total ?? 0} · {status?.stca_pairs_active ?? 0}
+        <span style={{ width: 90, textAlign: "right", fontFamily: "var(--ap-font-mono)", fontSize: "11px" }}>
+          {status?.tracks_total ?? 0} aircraft{status?.stca_pairs_active ? ` · ${status.stca_pairs_active} conflict${status.stca_pairs_active > 1 ? "s" : ""}` : ""}
         </span>
       </div>
     </div>

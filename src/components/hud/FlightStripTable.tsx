@@ -51,16 +51,17 @@ export default function FlightStripTable() {
 
   return (
     <div className="panel">
-      <h2>FLIGHT DATA STRIP BAY</h2>
+      <h2>Flight Progress Strips</h2>
 
-      <div className="bay-title">ACTIVE ARRIVALS</div>
+      <div className="bay-title">Arriving Aircraft</div>
       <div className="strip-bay">
-        {arrivals.length === 0 && <div className="bay-title">— no arrivals —</div>}
+        {arrivals.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft on approach</div>}
         {arrivals.map((t) => renderStrip(t, "arr"))}
       </div>
 
-      <div className="bay-title">EN-ROUTE DEPARTURES</div>
+      <div className="bay-title">Departing and En-Route Aircraft</div>
       <div className="strip-bay">
+        {departures.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft in this sector</div>}
         {departures.map((t) => renderStrip(t, "dep"))}
       </div>
     </div>

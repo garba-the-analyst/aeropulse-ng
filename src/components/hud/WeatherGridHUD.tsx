@@ -17,69 +17,69 @@ export default function WeatherGridHUD() {
 
   return (
     <div className="panel">
-      <h2>TRIPLE-FUSION WEATHER MATRIX</h2>
+      <h2>Current Weather</h2>
 
       <div className="kv-grid">
         <div className="kv">
-          <div className="k">QNH (AWOS)</div>
-          <div className="v">{w?.surface_qnh_hpa?.toFixed(1) ?? "--"} hPa</div>
+          <div className="k">Air Pressure</div>
+          <div className="v">{w?.surface_qnh_hpa?.toFixed(1) ?? "—"} hPa</div>
         </div>
         <div className="kv">
-          <div className="k">SURFACE WIND</div>
+          <div className="k">Surface Wind</div>
           <div className="v">
             {w?.surface_wind_dir_deg != null
               ? `${Math.round(w.surface_wind_dir_deg)}° / ${ktToKmh(
                   w.surface_wind_speed_kt ?? 0,
                 ).toFixed(0)} km/h`
-              : "--"}
+              : "—"}
           </div>
         </div>
         <div className="kv">
-          <div className="k">TEMP / DEW</div>
+          <div className="k">Temperature</div>
           <div className="v">
             {w?.surface_temperature_c != null
               ? `${Math.round(w.surface_temperature_c)}° / ${
-                  w.surface_dewpoint_c != null ? Math.round(w.surface_dewpoint_c) : "--"
+                  w.surface_dewpoint_c != null ? Math.round(w.surface_dewpoint_c) : "—"
                 }°`
-              : "--"}
+              : "—"}
           </div>
         </div>
         <div className="kv">
-          <div className="k">VISIBILITY (HZ)</div>
+          <div className="k">Visibility</div>
           <div className="v">
-            {w?.visibility_m != null ? `${(w.visibility_m / 1000).toFixed(1)}km` : "--"}
+            {w?.visibility_m != null ? `${(w.visibility_m / 1000).toFixed(1)} km` : "—"}
           </div>
         </div>
         <div className="kv">
-          <div className="k">HARMATTAN DUST LAYER</div>
-          <div className="v" style={w?.dust_layer_top_ft ? { color: "var(--ap-unknown)" } : undefined}>
+          <div className="k">Dust Layer</div>
+          <div className="v" style={w?.dust_layer_top_ft ? { color: "var(--ap-warning)" } : undefined}>
             {w?.dust_layer_top_ft != null
-              ? `TOP ${(w.dust_layer_top_ft * 0.3048).toFixed(1)} m`
-              : "CLEAR"}
+              ? `${(w.dust_layer_top_ft * 0.3048).toFixed(0)} m`
+              : "Clear"}
           </div>
         </div>
         <div className="kv">
-          <div className="k">FUSION NODES</div>
+          <div className="k">Weather Reports</div>
           <div className="v">{w?.nodes.length ?? 0}</div>
         </div>
       </div>
 
-      <h2 style={{ marginTop: 10 }}>UPPER-AIR MATRIX (ACARS + MODE S BDS 4,4/4,5)</h2>
+      <h2 style={{ marginTop: 14 }}>Upper Air Conditions</h2>
       <table className="upper-air-table">
         <thead>
           <tr>
-            <th>ALT</th>
-            <th>WIND</th>
-            <th>SPD</th>
-            <th>T°C</th>
-            <th>SRC</th>
+            <th>Altitude</th>
+            <th>Direction</th>
+            <th>Speed</th>
+            <th>Temp</th>
+            <th>Source</th>
           </tr>
         </thead>
         <tbody>
           {nodes.length === 0 && (
             <tr>
               <td colSpan={5} style={{ color: "var(--ap-text-dim)" }}>
-                — awaiting airborne reports —
+                No upper air reports available
               </td>
             </tr>
           )}
@@ -95,11 +95,11 @@ export default function WeatherGridHUD() {
         </tbody>
       </table>
 
-      <h2 style={{ marginTop: 10 }}>D-ATIS / METAR FEED</h2>
+      <h2 style={{ marginTop: 14 }}>Aerodrome Reports</h2>
       <div className="raw-text-feed">
-        {w?.datis_text ?? ""}
+        {w?.datis_text ?? "No aerodrome information available"}
         {"\n"}
-        {w?.metar_text ?? ""}
+        {w?.metar_text ? w.metar_text : ""}
       </div>
     </div>
   );
