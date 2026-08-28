@@ -315,11 +315,19 @@ input:focus-visible {
 }
 
 .hud-section {
-  min-width: 0;
-  min-height: 0;
-  overflow: visible;
+  min-width: 280px;
+  min-height: 340px;
+  max-height: 85vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  resize: both;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.hud-section:active {
+  border-color: var(--ap-accent);
 }
 
 .hud-section.active {
@@ -401,13 +409,12 @@ input:focus-visible {
 .panel {
   background: var(--ap-panel);
   border: 1px solid var(--ap-border);
-  border-radius: 6px;
+  border-radius: 0 0 6px 6px;
   padding: 14px 16px;
   overflow: auto;
-  min-height: 280px;
+  min-height: 200px;
   display: flex;
   flex-direction: column;
-  resize: both;
 }
 
 .hud-section .panel {
@@ -419,14 +426,23 @@ input:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0;
-  padding: 6px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--ap-border);
   border-bottom: none;
   border-radius: 6px 6px 0 0;
   background: var(--ap-panel-raised);
-  flex: 0 0 auto;
-  height: 32px;
+  flex: 0 0 36px;
+  height: 36px;
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+}
+.panel-header-actions:active {
+  cursor: grabbing;
+}
+.hud-section.dragging {
+  opacity: 0.6;
+  outline: 2px dashed var(--ap-accent);
 }
 
 .panel-header-actions h2 {
@@ -488,10 +504,13 @@ input:focus-visible {
   flex: 0 0 auto;
 }
 
-.panel::-webkit-resizer {
+.panel::-webkit-resizer, .hud-section::-webkit-resizer {
   background: var(--ap-border-strong);
   border: 2px solid var(--ap-panel);
   border-radius: 3px;
+}
+.hud-section::-webkit-resizer {
+  background: var(--ap-accent);
 }
 .panel::after {
   content: "";
@@ -803,10 +822,13 @@ input:focus-visible {
 }
 
 /* Larger, industry-standard text */
-.panel::-webkit-resizer {
+.panel::-webkit-resizer, .hud-section::-webkit-resizer {
   background: var(--ap-border-strong);
   border: 2px solid var(--ap-panel);
   border-radius: 3px;
+}
+.hud-section::-webkit-resizer {
+  background: var(--ap-accent);
 }
 .panel::after {
   content: "";
@@ -840,7 +862,8 @@ input:focus-visible {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .hud-body.compact > .hud-section {
