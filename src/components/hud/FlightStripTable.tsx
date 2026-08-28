@@ -24,7 +24,12 @@ function etaText(t: Track): string {
   return d.toISOString().slice(11, 16) + "Z";
 }
 
-export default function FlightStripTable() {
+interface Props {
+  selectedIcao?: string | null;
+  onSelect?: (icao24: string) => void;
+}
+
+export default function FlightStripTable({ selectedIcao, onSelect }: Props) {
   const snap = useTelemetry(4);
   const tracks = [...(snap?.tracks ?? [])].sort((a, b) =>
     a.callsign.localeCompare(b.callsign),
@@ -37,32 +42,50 @@ export default function FlightStripTable() {
     (t) => t.vertical_trend !== "descent" && t.altitude_ft >= 5_500,
   );
 
-  const renderStrip = (t: Track, keyPrefix: string) => (
-    <div className="strip" key={`${keyPrefix}-${t.icao24}`}>
-      <span className={`edge ${edgeClass(t)}`} />
-      <span>{t.callsign}</span>
-      <span>{t.class.toUpperCase()}</span>
-      <span>{ftToM(t.altitude_ft).toFixed(0)} m</span>
-      <span>{t.squawk}</span>
-      <span>{ktToKmh(t.ground_speed_kt).toFixed(0)} km/h</span>
-      <span style={{ textAlign: "right" }}>{etaText(t)}</span>
-    </div>
-  );
+  const renderStrip = (t: Track, keyPrefix: string) => {
+    const isSelected = selectedIcao === t.icao24;
+    return (
+      <div
+        className="strip"
+        key={`${keyPrefix}-${t.icao24}`}
+        onClick={() => onSelect?.(t.icao24)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter") onSelect?.(t.icao24); }}
+        style={{
+          cursor: onSelect ? "pointer" : "default",
+          borderColor: isSelected ? "var(--ap-accent)" : undefined,
+          background: isSelected ? "var(--ap-accent-soft)" : undefined,
+        }}
+        title="Select aircraft to view details and transmit"
+      >
+        <span className={`edge ${edgeClass(t)}`} />
+        <span>{t.callsign}</span>
+        <span>{t.class.toUpperCase()}</span>
+        <span>{ftToM(t.altitude_ft).toFixed(0)} m</span>
+        <span>{t.squawk}</span>
+        <span>{ktToKmh(t.ground_speed_kt).toFixed(0)} km/h</span>
+        <span style={{ textAlign: "right" }}>{etaText(t)}</span>
+      </div>
+    );
+  };
 
   return (
-    <div className="panel">
+    <div className="panel flight-strip-panel">
       <h2>Flight Progress Strips</h2>
 
-      <div className="bay-title">Arriving Aircraft</div>
-      <div className="strip-bay">
-        {arrivals.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft on approach</div>}
-        {arrivals.map((t) => renderStrip(t, "arr"))}
-      </div>
+      <div className="flight-strip-scroll" aria-label="All flight progress strips">
+        <div className="bay-title">Arriving Aircraft ({arrivals.length})</div>
+        <div className="strip-bay">
+          {arrivals.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft on approach</div>}
+          {arrivals.map((t) => renderStrip(t, "arr"))}
+        </div>
 
-      <div className="bay-title">Departing and En-Route Aircraft</div>
-      <div className="strip-bay">
-        {departures.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft in this sector</div>}
-        {departures.map((t) => renderStrip(t, "dep"))}
+        <div className="bay-title">Departing and En-Route Aircraft ({departures.length})</div>
+        <div className="strip-bay">
+          {departures.length === 0 && <div style={{ color: "var(--ap-text-dim)", fontSize: "12px", padding: "8px 0" }}>No aircraft in this sector</div>}
+          {departures.map((t) => renderStrip(t, "dep"))}
+        </div>
       </div>
     </div>
   );

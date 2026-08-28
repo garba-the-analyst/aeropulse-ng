@@ -35,9 +35,21 @@ export default function MasterCommandBar({ rangeKm, onRangeChange, showEmergency
   const armed = Date.now() < armedUntil;
 
   async function fireEmergency(): Promise<void> {
+    if (armed) {
+      setArmedUntil(0);
+      await invokeSafe("cancel_emergency_override", {});
+      return;
+    }
     setArmedUntil(Date.now() + 30_000);
     await invokeSafe("trigger_emergency_override", { durationS: 30 });
   }
+
+  // Auto-clear local armed state when timer expires
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmedUntil(0), armedUntil - Date.now());
+    return () => clearTimeout(t);
+  }, [armed, armedUntil]);
 
   return (
     <div className="command-bar">

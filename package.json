@@ -9,6 +9,8 @@
     "build": "tsc --noEmit -p src && vite build -c src/vite.config.ts",
     "preview": "vite preview -c src/vite.config.ts",
     "typecheck": "tsc --noEmit -p src",
+    "docs:office": "python3 scripts/build_office.py",
+    "docs:buysheets": "python3 scripts/build_buy_sheets.py",
     "tauri": "tauri",
     "engine:test": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
     "sidecar:test": "cd python-sidecar && venv/bin/python -m pytest tests -q"

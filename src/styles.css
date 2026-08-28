@@ -1,27 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
 :root {
-  --ap-bg: #070C1B;
-  --ap-panel: #0F1E32;
-  --ap-panel-raised: #142640;
-  --ap-surface: #1A2E4A;
-  --ap-border: #1E3A5A;
-  --ap-border-strong: #2A4A6B;
-  --ap-text: #E6EDF3;
-  --ap-text-secondary: #9CB0C9;
-  --ap-text-dim: #7A8FAE;
-  --ap-accent: #3B82F6;
-  --ap-accent-soft: #1E3A5E;
-  --ap-success: #22C55E;
-  --ap-warning: #D9A441;
-  --ap-critical: #E5484D;
-  /* Legacy aliases — uniform mapping, no neon */
+  /* PitchBlack / MetallicSilver / Obsidian palette. */
+  --ap-bg: #050607;
+  --ap-panel: #111417;
+  --ap-panel-raised: #1A1F24;
+  --ap-surface: #242A30;
+  --ap-border: #4A535D;
+  --ap-border-strong: #69737D;
+  --ap-text: #F0F2F4;
+  --ap-text-secondary: #C6CCD2;
+  --ap-text-dim: #A6B0BA;
+  --ap-accent: #C7CDD3;
+  --ap-accent-soft: #30373E;
+  --ap-success: #86B59A;
+  --ap-warning: #D2A85A;
+  --ap-critical: #D86161;
+  /* Legacy aliases — uniform mapping */
   --ap-ok: var(--ap-success);
   --ap-alert: var(--ap-critical);
-  --ap-civil: var(--ap-success);
-  --ap-military: #60A5FA;
-  --ap-unknown: var(--ap-warning);
-  --ap-grid: var(--ap-border);
+  --ap-civil: #C7CDD3;
+  --ap-military: #9FA9B3;
+  --ap-unknown: #D2A85A;
+  --ap-grid: #30373E;
   --ap-font-ui: "Inter", system-ui, -apple-system, sans-serif;
   --ap-font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
@@ -44,6 +43,13 @@ body,
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+#hud-root {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 48px 36px 1fr;
+  overflow: hidden;
 }
 
 /* ---- Controls — unified, calm ---- */
@@ -69,8 +75,8 @@ select {
 }
 
 select option {
-  background: #142640;
-  color: #E6EDF3;
+  background: var(--ap-panel-raised);
+  color: var(--ap-text);
 }
 
 button:hover,
@@ -235,18 +241,149 @@ input:focus-visible {
 
 .hud-root {
   display: grid;
-  grid-template-rows: 48px 1fr;
-  height: 100%;
+  grid-template-rows: 48px 36px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.hud-nav {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--ap-panel);
+  border-bottom: 1px solid var(--ap-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.hud-nav button {
+  white-space: nowrap;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ap-text-dim);
+}
+
+.hud-nav button:hover {
+  color: var(--ap-text);
+  background: var(--ap-panel-raised);
+}
+
+.hud-nav button.active {
+  color: var(--ap-text);
+  background: var(--ap-accent-soft);
+  border-color: var(--ap-border-strong);
 }
 
 .hud-body {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  grid-template-rows: 1.4fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-areas:
+    "strips detail"
+    "weather alerts"
+    "comms system";
+  grid-template-rows: repeat(3, minmax(300px, 1fr));
   gap: 12px;
   padding: 12px;
   background: var(--ap-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: stretch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ap-border) transparent;
+}
+
+.hud-body::-webkit-scrollbar {
+  width: 6px;
+}
+.hud-body::-webkit-scrollbar-thumb {
+  background: var(--ap-border);
+  border-radius: 3px;
+}
+
+.hud-body > div {
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.hud-section {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-section.active {
+  min-width: 0;
+  min-height: 0;
+}
+
+.hud-section > .panel {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-body.compact > .hud-section {
+  display: none;
+}
+
+.hud-body.compact > .hud-section.active {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-body.compact > .hud-section.active > .panel {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-weather > .panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.hud-strips { grid-area: strips; }
+.hud-detail { grid-area: detail; }
+.hud-weather { grid-area: weather; }
+.hud-alerts { grid-area: alerts; }
+.hud-comms { grid-area: comms; }
+.hud-system { grid-area: system; }
+
+.flight-strip-scroll {
+  height: calc(100% - 34px);
+  min-height: 0;
+  max-height: calc(100% - 34px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ap-border) transparent;
+}
+
+.flight-strip-scroll::-webkit-scrollbar,
+.upper-air-table-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.flight-strip-scroll::-webkit-scrollbar-thumb,
+.upper-air-table-scroll::-webkit-scrollbar-thumb {
+  background: var(--ap-border);
+  border-radius: 3px;
 }
 
 .panel {
@@ -256,6 +393,44 @@ input:focus-visible {
   padding: 14px 16px;
   overflow: auto;
   min-height: 0;
+}
+
+.flight-strip-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.flight-strip-panel > h2 {
+  flex: 0 0 auto;
+}
+
+.flight-strip-panel .flight-strip-scroll {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.upper-air-table-scroll {
+  flex: 0 1 240px;
+  min-height: 96px;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ap-border) transparent;
+}
+
+.upper-air-table-scroll .upper-air-table {
+  min-width: 480px;
+}
+
+.hud-weather .kv-grid {
+  flex: 0 0 auto;
+}
+
+.hud-weather .raw-text-feed {
+  flex: 0 0 auto;
 }
 
 .panel h2 {
@@ -440,7 +615,90 @@ input:focus-visible {
 @media (max-width: 1280px) {
   .hud-body {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
+    grid-template-areas:
+      "strips"
+      "detail"
+      "weather"
+      "alerts"
+      "comms"
+      "system";
+    grid-template-rows: none;
+    grid-auto-rows: minmax(300px, auto);
+    align-content: start;
+  }
+  .hud-body > div {
+    min-height: 300px;
+  }
+}
+
+/* A compact workstation needs a document flow, not a compressed dashboard.
+   Each card owns its content and the outer HUD owns the page scroll. */
+@media (max-width: 1400px), (max-height: 850px) {
+  #hud-root {
+    grid-template-rows: 48px 36px 1fr;
+  }
+
+  .hud-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    overflow-y: auto;
+    align-content: initial;
+  }
+
+  .hud-body > div,
+  .hud-section {
+    display: none;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .hud-body > div.active,
+  .hud-section.active {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .hud-section.active > .panel,
+  .hud-weather.active > .panel {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .flight-strip-scroll {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .upper-air-table-scroll {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+  }
+}
+
+@media (max-height: 720px) {
+   .hud-body {
+    grid-template-rows: repeat(3, minmax(260px, 1fr));
+    grid-auto-rows: minmax(260px, auto);
+    gap: 10px;
+    padding: 10px;
+  }
+  .panel {
+    padding: 12px;
   }
 }
 
@@ -474,6 +732,18 @@ input:focus-visible {
   .kv-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .hud-body > div {
+    min-height: 0;
+  }
+
+  .strip {
+    grid-template-columns: 3px minmax(80px, 1fr) minmax(70px, 1fr);
+  }
+
+  .upper-air-table-scroll .upper-air-table {
+    min-width: 440px;
+  }
 }
 
 /* Ensure canvas scales with container */
@@ -493,4 +763,80 @@ input:focus-visible {
 
 .kv .v {
   font-size: 15px;
+}
+
+/* Explicit compact-workspace contract. The active card owns the available
+   viewport; inactive cards never participate in layout, so content cannot
+   paint over the following section on short displays. */
+.hud-body.compact {
+  display: flex !important;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-body.compact > .hud-section {
+  display: none !important;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hud-body.compact > .hud-section.active {
+  display: flex !important;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-body.compact > .hud-section.active > .panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-body.compact .flight-strip-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hud-body.compact .weather-panel {
+  overflow: hidden !important;
+}
+
+.hud-body.compact .upper-air-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow-y: auto;
+   overscroll-behavior: contain;
+}
+
+.hud-body.compact .upper-air-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.hud-body.compact .upper-air-table th,
+.hud-body.compact .upper-air-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 1401px) and (min-height: 851px) {
+  .hud-body.full {
+    display: grid !important;
+  }
 }

@@ -97,6 +97,15 @@ export default function AudioRoutingPanel() {
     if (el?.setSinkId && secondaryId) void el.setSinkId(secondaryId).catch(() => {});
   }, [secondaryId]);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const freq = (e as CustomEvent<{ freq: string }>).detail?.freq;
+      if (freq) setFreq(freq);
+    };
+    window.addEventListener("ap-tune-frequency", handler as EventListener);
+    return () => window.removeEventListener("ap-tune-frequency", handler as EventListener);
+  }, []);
+
   return (
     <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {/* Hidden audio sinks for device routing — receive stream attaches here in production */}

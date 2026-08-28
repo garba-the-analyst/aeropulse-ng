@@ -111,7 +111,7 @@ function demoSnapshot(tMs: number): EngineSnapshot {
       line2: `1090 ${Math.round(t.ground_speed_kt)}K ${t.squawk}`,
       line3: `S-${t.squawk.length.toString().padStart(2, "0")}`,
       color:
-        t.class === "civil" ? "#00FF66" : t.class === "military" ? "#7C4DFF" : "#FFB300",
+        t.class === "civil" ? "#C7CDD3" : t.class === "military" ? "#9FA9B3" : "#D2A85A",
     })),
     stca_alerts: stca,
     geofence_breaches: [],

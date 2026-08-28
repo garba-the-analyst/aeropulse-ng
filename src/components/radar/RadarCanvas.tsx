@@ -109,7 +109,7 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
       ];
 
       // ---- background — uniform deep void --------------------------------
-      ctx.fillStyle = "#070C1B";
+      ctx.fillStyle = "#050607";
       ctx.fillRect(0, 0, wCss, hCss);
 
       // ---- range rings + crosshair grid — restrained, uniform ---------
@@ -160,16 +160,16 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
       const sweepAngle = ((Date.now() % 4000) / 4000) * Math.PI * 2;
       const grad = ctx.createConicGradient?.(sweepAngle, cx, cy);
       if (grad) {
-        grad.addColorStop(0, "rgba(59,130,246,0.06)");
-        grad.addColorStop(0.12, "rgba(59,130,246,0)");
-        grad.addColorStop(1, "rgba(59,130,246,0)");
+        grad.addColorStop(0, "rgba(199,205,211,0.06)");
+        grad.addColorStop(0.12, "rgba(199,205,211,0)");
+        grad.addColorStop(1, "rgba(199,205,211,0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(cx, cy, rangeRef.current * kmPx, 0, Math.PI * 2);
         ctx.fill();
       }
       // Sweep leading edge — thin, calm
-      ctx.strokeStyle = "rgba(59,130,246,0.35)";
+      ctx.strokeStyle = "rgba(199,205,211,0.35)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
@@ -299,7 +299,7 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
       if (rulerRef.current && anchorRef.current && cursorRef.current) {
         const { x: ax2, y: ay2 } = anchorRef.current;
         const { x: bx2, y: by2 } = cursorRef.current;
-        ctx.strokeStyle = "#E6EDF3";
+        ctx.strokeStyle = "#F0F2F4";
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
@@ -312,7 +312,7 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
         const distKm = Math.hypot(dxM, dyM) / 1000;
         let brg = Math.atan2(dxM, dyM) * (180 / Math.PI);
         if (brg < 0) brg += 360;
-        ctx.fillStyle = "#E6EDF3";
+        ctx.fillStyle = "#F0F2F4";
         ctx.font = "11px Inter, system-ui, sans-serif";
         ctx.fillText(`${brg.toFixed(0)}°  ·  ${distKm.toFixed(1)} km`, bx2 + 8, by2 - 6);
       }
@@ -337,14 +337,36 @@ export default function RadarCanvas({ rangeKm, rulerMode }: Props) {
     <canvas
       ref={canvasRef}
       className="radar-canvas"
-      style={{ cursor: rulerMode ? "crosshair" : "default" }}
+      style={{ cursor: rulerMode ? "crosshair" : "pointer" }}
       onClick={(e) => {
-        if (!rulerMode) return;
-        if (!anchorRef.current) {
-          anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
-        } else {
-          anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+        if (rulerMode) {
+          if (!anchorRef.current) {
+            anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+          } else {
+            anchorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+          }
+          return;
         }
+        // Aircraft selection — find nearest track within 20 px
+        const snap = getSnapshot();
+        if (!snap) return;
+        const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+        const wCss = rect.width; const hCss = rect.height;
+        const cx = wCss / 2; const cy = hCss / 2;
+        const latRad = (SITE.lat * Math.PI) / 180;
+        const { latM, lonM } = metersPerDegree(latRad);
+        const kmPx = Math.min(wCss, hCss) / 2 / rangeRef.current;
+        const pxPerDegLat = (latM / 1000) * kmPx;
+        const pxPerDegLon = (lonM / 1000) * kmPx;
+        const cx2 = e.nativeEvent.offsetX; const cy2 = e.nativeEvent.offsetY;
+        let best: string | null = null; let bestD = 22;
+        for (const t of snap.tracks) {
+          const x = cx + (t.longitude - SITE.lon) * pxPerDegLon;
+          const y = cy - (t.latitude - SITE.lat) * pxPerDegLat;
+          const d = Math.hypot(x - cx2, y - cy2);
+          if (d < bestD) { bestD = d; best = t.icao24; }
+        }
+        if (best) window.dispatchEvent(new CustomEvent("ap-select-aircraft", { detail: best }));
       }}
       onMouseMove={(e) => {
         cursorRef.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };

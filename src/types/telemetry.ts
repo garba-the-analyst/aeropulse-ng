@@ -105,12 +105,12 @@ export interface EngineSnapshot {
 
 /** Restrained operational palette — uniform, high-contrast, low glare. */
 export const SYMBOLOGY = {
-  background: "#070C1B",
-  grid: "#1E344D",
-  civil: "#22C55E",
-  military: "#60A5FA",
-  unknown: "#D9A441",
-  alert: "#E5484D",
+  background: "#050607",
+  grid: "#30373E",
+  civil: "#C7CDD3",
+  military: "#9FA9B3",
+  unknown: "#D2A85A",
+  alert: "#D86161",
 } as const;
 
 export function trackColor(t: Track): string {

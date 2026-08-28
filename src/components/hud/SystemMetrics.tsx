@@ -42,11 +42,11 @@ export default function SystemMetrics() {
         canvas.height = Math.round(hCss * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      ctx.fillStyle = "#0F1E32";
+      ctx.fillStyle = "#111417";
       ctx.fillRect(0, 0, wCss, hCss);
 
       // Grid — subtle, uniform
-      ctx.strokeStyle = "rgba(46,74,106,0.35)";
+      ctx.strokeStyle = "rgba(74,83,93,0.35)";
       ctx.beginPath();
       for (let gx = 0; gx <= wCss; gx += wCss / 8) {
         ctx.moveTo(gx, 0);
@@ -59,7 +59,7 @@ export default function SystemMetrics() {
       const online = s?.status.hardware[0]?.online ?? false;
       const tSec = Date.now() / 120;
 
-      ctx.strokeStyle = online ? "#22C55E" : "#E5484D";
+      ctx.strokeStyle = online ? "#86B59A" : "#D86161";
       ctx.beginPath();
       for (let i = 0; i < BINS; i++) {
         const frac = i / (BINS - 1);
@@ -77,7 +77,7 @@ export default function SystemMetrics() {
       ctx.stroke();
 
       // Frequency markers — restrained
-      ctx.fillStyle = "#7A8FAE";
+      ctx.fillStyle = "#A6B0BA";
       ctx.font = "10px Inter, system-ui, sans-serif";
       ctx.fillText("131.550 MHz", wCss * 0.12 - 22, hCss - 6);
       ctx.fillText("1 090 MHz", wCss * 0.78 - 24, hCss - 6);
@@ -97,16 +97,25 @@ export default function SystemMetrics() {
     <div className="panel">
       <h2>System Status</h2>
 
-      {(status?.hardware ?? []).map((h) => (
-        <div key={h.channel_id} style={{ display: "flex", gap: 8, fontSize: "11px", fontFamily: "var(--ap-font-mono)", alignItems: "center" }}>
-          <span className={`dot ${h.online ? "ok" : "down"}`} />
-          <span style={{ width: 56, color: "var(--ap-text-secondary)" }}>{h.channel_id}</span>
-          <span style={{ flex: 1 }}>{h.role}</span>
-          <span style={{ color: "var(--ap-text-dim)" }}>
-            {h.online ? `${h.messages_per_second.toFixed(0)} messages/sec` : "Offline"}
-          </span>
-        </div>
-      ))}
+      {(status?.hardware ?? []).map((h) => {
+        const isSim = !h.online && (status?.tracks_total ?? 0) > 0;
+        return (
+          <div key={h.channel_id} style={{ display: "flex", gap: 8, fontSize: "11px", fontFamily: "var(--ap-font-mono)", alignItems: "center" }}>
+            <span className={`dot ${h.online ? "ok" : "down"}`} />
+            <span style={{ width: 56, color: "var(--ap-text-secondary)" }}>{h.channel_id}</span>
+            <span style={{ flex: 1 }}>{h.role}</span>
+            <span style={{ color: "var(--ap-text-dim)" }}>
+              {h.online
+                ? (h.messages_per_second > 0
+                    ? `${h.messages_per_second.toFixed(0)} messages/sec`
+                    : "Monitoring — Listening")
+                : isSim
+                  ? "Simulated — Active"
+                  : "Offline"}
+            </span>
+          </div>
+        );
+      })}
 
       <canvas ref={canvasRef} style={{ width: "100%", height: 110, marginTop: 10, borderRadius: "4px", border: "1px solid var(--ap-border)" }} />
 
