@@ -14,12 +14,15 @@ function frequencyForIcao(icao24: string): string {
 }
 
 export default function HudApp() {
+  const isPopOut = typeof window !== "undefined" && !!window.location.hash.slice(1);
+  const initialSection = typeof window !== "undefined" ? window.location.hash.slice(1) || "strips" : "strips";
+  const validSections = ["strips","detail","weather","alerts","comms","system"];
   const [selected, setSelected] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState("strips");
+  const [activeSection, setActiveSection] = useState(() => validSections.includes(initialSection) ? initialSection : "strips");
   const [compactLayout, setCompactLayout] = useState(() =>
-    typeof window !== "undefined" &&
+    isPopOut || (typeof window !== "undefined" &&
     (window.matchMedia("(max-width: 1400px)").matches ||
-      window.matchMedia("(max-height: 850px)").matches),
+      window.matchMedia("(max-height: 850px)").matches)),
   );
 
   const handleSelect = useCallback((icao24: string) => {
@@ -31,6 +34,35 @@ export default function HudApp() {
     window.dispatchEvent(new CustomEvent("ap-tune-frequency", { detail: { freq } }));
     setActiveSection("comms");
   }, []);
+
+  const popOut = (id: string, title: string) => {
+    const hashUrl = `hud.html#${id}`;
+    const absUrl = new URL(hashUrl, window.location.href).href;
+    const isTauri = typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in (window as unknown as Record<string, unknown>));
+    if (isTauri) {
+      import("@tauri-apps/api/webviewWindow").then(({ WebviewWindow }) => {
+        const label = `hud-${id}-${Date.now()}`;
+        try {
+          const win = new WebviewWindow(label, {
+            url: hashUrl,
+            title: `AeroPulse-NG — ${title}`,
+            width: 760,
+            height: 680,
+            resizable: true,
+            center: true,
+          });
+          // @ts-ignore - Tauri event may not be typed
+          win.once?.("tauri://error", () => window.open(absUrl, "_blank"));
+        } catch {
+          window.open(absUrl, "_blank", "width=760,height=680,scrollbars=yes,resizable=yes");
+        }
+      }).catch(() => window.open(absUrl, "_blank", "width=760,height=680,scrollbars=yes,resizable=yes"));
+      return;
+    }
+    // Browser fallback — synchronous to avoid popup blocker
+    const win = window.open(absUrl, "_blank", "width=760,height=680,scrollbars=yes,resizable=yes");
+    if (!win) alert("Pop-out blocked — please allow pop-ups for this site.");
+  };
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -53,42 +85,55 @@ export default function HudApp() {
     };
   }, []);
 
-  const sections = [
-    ["strips", <FlightStripTable selectedIcao={selected} onSelect={handleSelect} />],
-    ["detail", <AircraftDetailPanel icao24={selected} onClear={() => setSelected(null)} onTransmit={handleTransmit} />],
-    ["weather", <WeatherGridHUD />],
-    ["alerts", <ThreatMatrix />],
-    ["comms", <AudioRoutingPanel />],
-    ["system", <SystemMetrics />],
-  ] as const;
+  const sections: Array<[string, string, React.ReactNode]> = [
+    ["strips", "Flight Strips", <FlightStripTable selectedIcao={selected} onSelect={handleSelect} />],
+    ["detail", "Aircraft", <AircraftDetailPanel icao24={selected} onClear={() => setSelected(null)} onTransmit={handleTransmit} />],
+    ["weather", "Weather", <WeatherGridHUD />],
+    ["alerts", "Alerts", <ThreatMatrix />],
+    ["comms", "Audio And Communications", <AudioRoutingPanel selectedIcao={selected} />],
+    ["system", "System", <SystemMetrics />],
+  ];
+
+  // If this window was opened as a pop-out, lock to that single section
+  const isSinglePanel = isPopOut && validSections.includes(initialSection);
 
   return (
     <div className="hud-root">
-      <MasterCommandBar rangeKm={150} onRangeChange={() => undefined} showEmergency={false} />
-      <nav className="hud-nav">
-        {[
-          ["strips", "Flight Strips"],
-          ["detail", "Aircraft"],
-          ["weather", "Weather"],
-          ["alerts", "Alerts"],
-          ["comms", "Audio"],
-          ["system", "System"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            className={activeSection === id ? "active" : ""}
-            aria-current={activeSection === id ? "page" : undefined}
-            onClick={() => setActiveSection(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-      <div className={`hud-body ${compactLayout ? "compact" : "full"}`} id="hud-scroll">
-        {sections.map(([id, content]) => {
-          if (compactLayout && activeSection !== id) return null;
+      {!isSinglePanel && <MasterCommandBar rangeKm={150} onRangeChange={() => undefined} showEmergency={false} />}
+      {isSinglePanel ? (
+        <div style={{ padding: "8px 12px", background: "var(--ap-panel)", borderBottom: "1px solid var(--ap-border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--ap-text-dim)" }}>{String(sections.find(s => s[0] === initialSection)?.[1] ?? initialSection)}</span>
+          <button onClick={() => window.close()} style={{ padding: "4px 10px", fontSize: "11px" }}>Close</button>
+        </div>
+      ) : (
+        <nav className="hud-nav">
+          {[
+            ["strips", "Flight Strips"],
+            ["detail", "Aircraft"],
+            ["weather", "Weather"],
+            ["alerts", "Alerts"],
+            ["comms", "Audio"],
+            ["system", "System"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              className={activeSection === id ? "active" : ""}
+              onClick={() => setActiveSection(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
+      <div className={`hud-body ${isSinglePanel ? "single" : compactLayout ? "compact" : "full"}`} id="hud-scroll">
+        {sections.map(([id, label, content]) => {
+          if (isSinglePanel && id !== initialSection) return null;
           return (
-            <div className={`hud-section hud-${id} active`} id={`sec-${id}`} key={id}>
+            <div className={`hud-section hud-${id}`} id={`sec-${id}`} key={id}>
+              <div className="panel-header-actions">
+                <span style={{ fontSize: "10px", color: "var(--ap-text-dim)", letterSpacing: "0.04em", textTransform: "uppercase" }}>{String(label)}</span>
+                <button className="popout-btn" onClick={() => popOut(String(id), String(label))} title="Open this panel in a separate window">Pop Out ↗</button>
+              </div>
               {content}
             </div>
           );
