@@ -1,0 +1,71 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # Uses tauri-action which handles Tauri v2 build + bundling (MSI + NSIS)
+      - name: Build Tauri (Windows)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "AeroPulse-NG v__VERSION__"
+          releaseBody: "Windows build for ${{ github.sha }}"
+          releaseDraft: true
+          prerelease: false
+          # build in src-tauri, bundle targets: msi, nsis
+          args: --verbose
+
+      - name: Upload MSI/EXE artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/*.exe
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Alternative: pure CLI without action (uncomment if you prefer)
+      # - name: Tauri build (CLI)
+      #   run: npx tauri build
+      # - name: Upload bundle
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: windows-bundle
+      #     path: src-tauri/target/release/bundle/

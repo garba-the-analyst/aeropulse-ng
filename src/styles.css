@@ -51,6 +51,17 @@ body,
   grid-template-rows: 48px 36px 1fr;
   overflow: hidden;
 }
+.hud-root.single {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.hud-root.single .hud-body.single {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
 
 /* ---- Controls — unified, calm ---- */
 button,
@@ -328,6 +339,49 @@ input:focus-visible {
 }
 .hud-section:active {
   border-color: var(--ap-accent);
+}
+
+/* Free independent panes (desktop) */
+.hud-body.free {
+  display: block !important;
+  position: relative;
+  overflow: auto;
+  background: var(--ap-bg);
+  padding: 0;
+  min-height: 0;
+  height: 100%;
+}
+.hud-section.free-pane {
+  position: absolute;
+  resize: none;
+  overflow: hidden;
+  background: var(--ap-bg);
+  border: 1px solid var(--ap-border);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  border-radius: 6px;
+  min-width: 300px;
+  min-height: 260px;
+  max-height: none;
+}
+.hud-section.free-pane:focus-within,
+.hud-section.free-pane:active {
+  border-color: var(--ap-border-strong);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.free-resizer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--ap-border-strong) 50%, var(--ap-border-strong) 58%, transparent 58%, transparent 66%, var(--ap-border-strong) 66%, var(--ap-border-strong) 74%, transparent 74%);
+  border-bottom-right-radius: 6px;
+  opacity: 0.9;
+  z-index: 2;
+}
+.free-resizer:hover {
+  background: linear-gradient(135deg, transparent 50%, var(--ap-accent) 50%, var(--ap-accent) 58%, transparent 58%, transparent 66%, var(--ap-accent) 66%, var(--ap-accent) 74%, transparent 74%);
 }
 
 .hud-section.active {
@@ -854,75 +908,41 @@ input:focus-visible {
   font-size: 15px;
 }
 
-/* Explicit compact-workspace contract. The active card owns the available
-   viewport; inactive cards never participate in layout, so content cannot
-   paint over the following section on short displays. */
+/* Compact workspace: stacked scrollable — all cards visible */
 .hud-body.compact {
   display: flex !important;
-  flex: 1 1 auto;
   flex-direction: column;
-  min-height: 0;
+  gap: 12px;
+  padding: 12px 12px 24px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: flex-start;
+}
+.hud-body.compact > .hud-section {
+  display: flex !important;
+  flex-direction: column;
+  width: 100%;
+  min-height: 300px;
+  overflow: visible;
+  flex: 0 0 auto;
+}
+.hud-body.compact > .hud-section > .panel {
+  flex: 1 1 auto;
+  min-height: 280px;
   overflow-y: auto;
   overflow-x: hidden;
 }
-
-.hud-body.compact > .hud-section {
-  display: none !important;
-  min-width: 0;
-  min-height: 0;
-}
-
-.hud-body.compact > .hud-section.active {
-  display: flex !important;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.hud-body.compact > .hud-section.active > .panel {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .hud-body.compact .flight-strip-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: auto;
-  max-height: none;
+  max-height: 360px;
   overflow-y: auto;
-  overscroll-behavior: contain;
 }
-
-.hud-body.compact .weather-panel {
-  overflow: hidden !important;
-}
-
 .hud-body.compact .upper-air-table-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: auto;
-  max-height: none;
+  flex: 0 1 260px;
+  max-height: 320px;
   overflow-y: auto;
-   overscroll-behavior: contain;
 }
-
 .hud-body.compact .upper-air-table {
-  width: 100%;
-  min-width: 0;
-  table-layout: fixed;
-}
-
-.hud-body.compact .upper-air-table th,
-.hud-body.compact .upper-air-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 480px;
 }
 
 @media (min-width: 1401px) and (min-height: 851px) {
