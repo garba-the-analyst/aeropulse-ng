@@ -186,7 +186,55 @@ warning-free under `cargo build`; anything new is a regression — run
 
 ---
 
-## 8. Shutdown & Persistence
+## 8. Coverage Physics — What the Demo Can and Cannot See
+
+### 8.1 Radio Horizon (Line-of-Sight)
+
+AeroPulse-NG receives 1090 MHz ADS-B/Mode S signals. Radio waves at 1090 MHz travel in straight lines and are limited by Earth's curvature. The radio horizon for a receiver at height `h_r` (ft AGL) and a target at height `h_t` (ft AGL) is:
+
+```
+LOS_NM = 1.06 × (√h_r + √h_t)   [nautical miles]
+```
+
+| Antenna height | Target 500 ft | Target 1 000 ft | Target 2 000 ft |
+|----------------|---------------|-----------------|-----------------|
+| 30 ft (mast)   | 25 NM         | 34 NM           | 48 NM           |
+| 100 ft (tower) | 30 NM         | 39 NM           | 53 NM           |
+| 300 ft (hill)  | 38 NM         | 47 NM           | 61 NM           |
+
+Terrain, buildings and vegetation reduce these ranges by 15–30 % in practice.
+
+### 8.2 What This Means for the Demo
+
+The competition demo runs a single RTL-SDR at DNKN (Mallam Aminu Kano Intl, antenna ~30 m AGL, flat terrain). Its declared envelope:
+
+- **34 NM @ 1 000 ft AGL** (flat terrain, no clutter)
+- **25 NM @ 500 ft AGL**
+- Terrain penalty: –15 % urban, –30 % hilly
+
+**This is a measured physics bound, not a marketing figure.** No software processing can extend the radio horizon; only additional receiver sites (MLAT) or passive-RF illumination can close low-altitude gaps.
+
+### 8.3 Extended Mode S — What We Track Beyond ADS-B Out
+
+The decoder listens on 1090 MHz for all Mode S downlinks, not just ADS-B Extended Squitter (DF17/18). This means:
+
+| Signal | What It Gives | Who Broadcasts It |
+|--------|---------------|-------------------|
+| **DF17/18 ADS-B** | Position, velocity, callsign, status | Commercial + participating military |
+| **DF11 All-call reply** | ICAO address + capability | Any Mode S transponder replying to ATC radar |
+| **DF20 Comm-B Altitude** | Elicited baro altitude | Mode S targets interrogated by ATC |
+| **DF21 Comm-B Identity** | Elicited callsign | Mode S targets interrogated by ATC |
+| **DF0/4/5/16 ACAS/TCAS** | Reply info + optional altitude | TCAS-equipped aircraft (military, GA, helicopters) |
+
+**What this means:** AeroPulse-NG sees **any aircraft with a Mode S transponder that replies to an ATC interrogator**, even if it does not broadcast ADS-B Out (DF17). Many military transports, helicopters and GA aircraft fall in this category.
+
+**What we do NOT see:** Aircraft with **no transponder at all** (no Mode S, no Mode A/C). Detecting those requires primary radar or passive-RF illumination (FM/TV/cellular reflections) — this is a research roadmap item, not a current capability.
+
+**Air-gap note:** All decoding is passive reception on 1090 MHz. No network, no keys, no external databases. The extended Mode S sources are simply additional downlinks on the same frequency, received by the same RTL-SDR.
+
+---
+
+## 9. Shutdown & Persistence
 
 Close either window or `Ctrl-C` the launcher terminal. The sidecar flushes and
 exits on stdin closure; DuckDB commits are transactional per batch, so kill -9

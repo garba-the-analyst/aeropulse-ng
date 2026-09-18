@@ -89,6 +89,8 @@ struct TrackState {
     last_velocity_ms: Option<u64>,
     messages_seen: u64,
     breach_until_ms: u64,
+    mode_s_capable: bool,
+    last_baro_altitude_ft: Option<f64>,
 }
 
 impl TrackState {
@@ -105,6 +107,8 @@ impl TrackState {
             last_velocity_ms: None,
             messages_seen: 0,
             breach_until_ms: 0,
+            mode_s_capable: false,
+            last_baro_altitude_ft: None,
         }
     }
 }
@@ -300,6 +304,11 @@ impl SurveillanceEngine {
                 DecodedMessage::Velocity { icao24, .. } => *icao24,
                 DecodedMessage::AircraftStatus { icao24, .. } => *icao24,
                 DecodedMessage::SurfacePosition { icao24, .. } => *icao24,
+                DecodedMessage::AllCallReply { icao24, .. } => *icao24,
+                DecodedMessage::CommBAltitudeReply { icao24, .. } => *icao24,
+                DecodedMessage::CommBIdentityReply { icao24, .. } => *icao24,
+                DecodedMessage::AirAirSurveillance { icao24, .. } => *icao24,
+                DecodedMessage::GroundRelay { icao24, .. } => *icao24,
             }
         );
 
@@ -376,6 +385,122 @@ impl SurveillanceEngine {
                 }
             }
             DecodedMessage::SurfacePosition { .. } => {}
+            // New DF types - passive ingestion for track enrichment
+            DecodedMessage::AllCallReply { icao24, .. } => {
+                // Mark track as Mode S capable (replies to interrogator)
+                ts.mode_s_capable = true;
+            }
+            DecodedMessage::CommBAltitudeReply { altitude_ft, .. } => {
+                if let Some(alt) = altitude_ft {
+                    ts.last_baro_altitude_ft = Some(alt);
+                }
+            }
+            DecodedMessage::CommBIdentityReply { callsign, .. } => {
+                if !callsign.is_empty() {
+                    ts.callsign = callsign.clone();
+                    ts.class = infer_class(&callsign);
+                }
+            }
+            DecodedMessage::AirAirSurveillance { .. } => {
+                // ACAS/TCAS reply - mark as potentially military
+                ts.mode_s_capable = true;
+            }
+DecodedMessage::GroundRelay { message, .. } => {
+                // Recursively process the relayed message
+                Self::ingest_mode_s_inner(ts, *message, now_ms, &self.cfg.site);
+            }
+        }
+    }
+
+    fn ingest_mode_s_inner(ts: &mut TrackState, msg: DecodedMessage, now_ms: u64, site: &crate::kinematics::SiteOrigin) {
+        match msg {
+            DecodedMessage::Identity { callsign, .. } => {
+                if !callsign.is_empty() {
+                    ts.callsign = callsign.clone();
+                    ts.class = infer_class(&callsign);
+                }
+            }
+            DecodedMessage::AirbornePosition {
+                odd,
+                lat_cpr,
+                lon_cpr,
+                altitude_ft,
+                ..
+            } => {
+                let opposite = if odd {
+                    ts.cpr_even.take()
+                } else {
+                    ts.cpr_odd.take()
+                };
+
+                let current = CprSlot {
+                    lat_cpr,
+                    lon_cpr,
+                    received_ms: now_ms,
+                };
+
+                let mut solved = false;
+                if let Some(prev) =
+                    opposite.filter(|p| now_ms.saturating_sub(p.received_ms) <= CPR_PAIR_WINDOW_MS)
+                {
+                    let (even_pair, odd_pair) = if odd {
+                        ((prev.lat_cpr, prev.lon_cpr), (lat_cpr, lon_cpr))
+                    } else {
+                        ((lat_cpr, lon_cpr), (prev.lat_cpr, prev.lon_cpr))
+                    };
+                    if let Some(pos) = cpr_global_decode(even_pair, odd_pair, odd) {
+                        let (x_m, y_m) =
+                            site.to_local(pos.latitude_deg, pos.longitude_deg);
+                        ts.ekf.fuse_position(x_m, y_m, altitude_ft, now_ms as f64 / 1000.0);
+                        ts.last_position_ms = now_ms;
+                        solved = true;
+                    }
+                }
+
+                if odd {
+                    ts.cpr_odd = Some(current);
+                } else {
+                    ts.cpr_even = Some(current);
+                }
+                let _ = solved;
+            }
+            DecodedMessage::Velocity {
+                ground_speed_kt,
+                track_deg,
+                vertical_rate_fpm,
+                ..
+            } => {
+                if let (Some(gs), Some(trk)) = (ground_speed_kt, track_deg) {
+                    ts.ekf.fuse_velocity(gs, trk, vertical_rate_fpm.unwrap_or(0.0), now_ms as f64 / 1000.0);
+                    ts.last_velocity_ms = Some(now_ms);
+                }
+            }
+            DecodedMessage::AircraftStatus { emergency_state, .. } => {
+                if (1..=6).contains(&emergency_state) && ts.squawk.is_empty() {
+                    ts.squawk = "7700".into();
+                }
+            }
+            DecodedMessage::SurfacePosition { .. } => {}
+            DecodedMessage::AllCallReply { .. } => {
+                ts.mode_s_capable = true;
+            }
+            DecodedMessage::CommBAltitudeReply { altitude_ft, .. } => {
+                if let Some(alt) = altitude_ft {
+                    ts.last_baro_altitude_ft = Some(alt);
+                }
+            }
+            DecodedMessage::CommBIdentityReply { callsign, .. } => {
+                if !callsign.is_empty() {
+                    ts.callsign = callsign.clone();
+                    ts.class = infer_class(&callsign);
+                }
+            }
+            DecodedMessage::AirAirSurveillance { .. } => {
+                ts.mode_s_capable = true;
+            }
+DecodedMessage::GroundRelay { message, .. } => {
+                Self::ingest_mode_s_inner(ts, *message, now_ms, site);
+            }
         }
     }
 
@@ -562,6 +687,8 @@ impl SurveillanceEngine {
                 coasting,
                 position_sigma_m: ts.ekf.horizontal_sigma_m(),
                 leader_line,
+                mode_s_capable: ts.mode_s_capable,
+                last_baro_altitude_ft: ts.last_baro_altitude_ft,
             };
             fdbs.push(FlightDataBlock::from_track(&track));
             tracks_out.push(track);

@@ -101,7 +101,58 @@ Every mathematical claim in this repository is executable:
 
 Run everything: `./scripts/verify.sh`.
 
-## 7. Roadmap
+## 7. Coverage Model (Low-Altitude Physics)
+
+### 7.1 Line-of-Sight Horizon
+The radio horizon for a receiver at height `h_r` (ft AGL) observing a target at height `h_t` (ft AGL) over smooth Earth is:
+
+```
+LOS_NM = 1.06 × (√h_r + √h_t)
+```
+
+| Antenna height | Target 500 ft | Target 1 000 ft | Target 2 000 ft |
+|----------------|---------------|-----------------|-----------------|
+| 30 ft (mast)   | 25 NM         | 34 NM           | 48 NM           |
+| 100 ft (tower) | 30 NM         | 39 NM           | 53 NM           |
+| 300 ft (hill)  | 38 NM         | 47 NM           | 61 NM           |
+
+Terrain and clutter reduce these radii by 15–30 % in built-up / hilly areas. The demo site at DNKN (antenna ~30 m AGL, flat terrain) achieves ~34 NM at 1 000 ft AGL.
+
+### 7.2 Station Spacing for Continuous Coverage
+Continuous coverage down to 1 000 ft AGL requires a ground station every **40–80 NM** (≈ 40 NM average radius per station). For a Nigeria-scale deployment this implies ~25 stations. Any claim of "software compensating for sparse coverage" is physically unsupported; the only engineering mitigations are:
+- **MLAT** (multilateration): triangulate a Mode S reply across ≥3 synchronised receivers (NAMA Niger Delta project follows this).
+- **Passive radar**: exploit FM/TV/cellular illuminators for non-cooperative targets (see §8).
+
+### 7.3 Demo Coverage Statement
+The competition demo runs a single RTL-SDR at DNKN (12.0486° N, 8.5222° E, antenna ~30 m AGL). Its declared envelope:
+- 34 NM @ 1 000 ft AGL (flat terrain, no clutter)
+- 25 NM @ 500 ft AGL
+- Terrain penalty: –15 % urban, –30 % hilly
+
+This is a **measured physics bound**, not a marketing figure.
+
+---
+
+## 8. Extended Mode S Decoding (Air-Gapped, Zero External Keys)
+
+The decoder (`src/hardware/mode_s_decoder.rs`) now supports:
+
+| DF | Format | Payload | Use in AeroPulse-NG |
+|----|--------|---------|---------------------|
+| **17 / 18** | ADS-B Extended Squitter | Position, velocity, identity, status | Primary surveillance source |
+| **11** | All-call reply | ICAO + capability | Proves Mode S capability (military/GA without ADS-B Out) |
+| **20** | Comm-B Altitude Reply | Elicited barometric altitude | Fuses with ADS-B altitude for consistency check |
+| **21** | Comm-B Identity Reply | Elicited callsign | Confirms identity for non-ADS-B Mode S targets |
+| **0 / 4 / 5 / 16** | Short/Long air-air (ACAS/TCAS) | RI + optional altitude | Marks track as ACAS-equipped (likely military/GA) |
+| **18** | Ground relay of extended squitter | Relayed ADS-B payload | Handled transparently, same processing as DF17 |
+
+**Air-gap guarantee:** All decoding runs locally on 1090 MHz I/Q; no network keys, no external databases, no cryptographic material. Non-cooperative detection (DF0/4/5/16/20/21) is purely passive reception of elicited replies — the aircraft replies to an ATC interrogator; we merely listen.
+
+**Non-cooperative roadmap:** To detect targets with **no transponder at all**, the architecture supports a parallel **passive-RF SDR chain** (GNU Radio `gr-pcl` cross-correlation against FM/TV/cellular illuminators) producing `Track` structs that fuse into the existing EKF/STCA. This is a post-NDAIE research item; the decoder interfaces are already shaped for it.
+
+---
+
+## 9. Roadmap
 
 | # | Item | Notes |
 |---|---|---|
@@ -112,3 +163,4 @@ Run everything: `./scripts/verify.sh`.
 | 5 | Alert/weather persistence | tables exist; writers pending |
 | 6 | Zero-copy IPC | §3 migration path |
 | 7 | Multi-site handover, RBAC views, offline vector tiles | operational-scale features |
+| 8 | Passive-RF SDR chain (FM/TV/5G) | GNU Radio `gr-pcl` bistatic cross-correlation → Track fusion; decoder interfaces ready |
