@@ -230,7 +230,8 @@ mod tests {
             "latitude":12.35,"longitude":8.13,"altitude_ft":32000,"ground_speed_kt":445,
             "course_deg":205,"vertical_rate_fpm":0,"vertical_trend":"level","squawk":"7700",
             "on_ground":false,"last_update_ms":1700000000000,"age_s":0,"coasting":false,
-            "position_sigma_m":41,"leader_line":[[12.35,8.13]]}"#,
+            "position_sigma_m":41,"leader_line":[[12.35,8.13]],
+            "mode_s_capable":false,"last_baro_altitude_ft":null}"#,
         )
         .expect("track fixture")
     }
@@ -250,6 +251,19 @@ mod tests {
         assert_eq!(v["cmd"], "log_tracks");
         assert_eq!(v["tracks"][0]["callsign"], "VL604");
         assert_eq!(v["tracks"][0]["squawk"], "7700");
+    }
+
+    #[test]
+    fn track_deserializes_without_new_fields() {
+        // Older payloads without mode_s_capable and last_baro_altitude_ft should still deserialize
+        let old_payload = r#"{"icao24":"342157","callsign":"VL604","class":"civil","alert":"none",
+            "latitude":12.35,"longitude":8.13,"altitude_ft":32000,"ground_speed_kt":445,
+            "course_deg":205,"vertical_rate_fpm":0,"vertical_trend":"level","squawk":"7700",
+            "on_ground":false,"last_update_ms":1700000000000,"age_s":0,"coasting":false,
+            "position_sigma_m":41,"leader_line":[[12.35,8.13]]}"#;
+        let track: Track = serde_json::from_str(old_payload).expect("old payload deserializes");
+        assert!(!track.mode_s_capable);
+        assert!(track.last_baro_altitude_ft.is_none());
     }
 
     #[test]

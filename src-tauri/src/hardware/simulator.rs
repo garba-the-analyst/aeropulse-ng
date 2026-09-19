@@ -551,13 +551,7 @@ mod tests {
         for f in &frames {
             if let Some(res) = decode_frame(f) {
                 decoded += 1;
-                let icao = match &res.message {
-                    DecodedMessage::Identity { icao24, .. } => *icao24,
-                    DecodedMessage::AirbornePosition { icao24, .. } => *icao24,
-                    DecodedMessage::Velocity { icao24, .. } => *icao24,
-                    DecodedMessage::AircraftStatus { icao24, .. } => *icao24,
-                    DecodedMessage::SurfacePosition { icao24, .. } => *icao24,
-                };
+                let icao = res.message.icao24();
                 assert_ne!(icao, 0, "zero ICAO impossible");
             } else {
                 panic!("simulator produced undecodable frame: {}", crate::hardware::mode_s_decoder::frame_to_hex(f));

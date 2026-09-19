@@ -76,8 +76,10 @@ pub struct Track {
     pub leader_line: Vec<[f64; 2]>,
 
     /// Mode S transponder capability flags from extended DF decoding
+    #[serde(default)]
     pub mode_s_capable: bool,
     /// Last barometric altitude from Comm-B reply (DF20), feet
+    #[serde(default)]
     pub last_baro_altitude_ft: Option<f64>,
 }
 

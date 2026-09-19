@@ -10,6 +10,65 @@
 //!
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+/// All decoding is air-gapped: no network dependency, no external keys.
+
+/// Cache of recently confirmed ICAO addresses for AP-frame validation.
+/// DF0/4/5/16/20/21 use Address/Parity (AP) where the ICAO is XORed into the parity field.
+/// These frames cannot self-validate; we only accept them if the ICAO (remainder) has been
+/// recently confirmed by a CRC-clean DF11/17/18 frame.
+pub struct IcaoCache {
+    entries: HashMap<u32, u64>, // icao24 -> last_seen_ms
+    ttl_ms: u64,
+    max_entries: usize,
+}
+
+impl IcaoCache {
+    pub fn new(ttl_ms: u64, max_entries: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            ttl_ms,
+            max_entries,
+        }
+    }
+
+    /// Called when a self-validating frame (DF11/17/18) passes CRC.
+    pub fn confirm(&mut self, icao: u32, now_ms: u64) {
+        if self.entries.len() >= self.max_entries && !self.entries.contains_key(&icao) {
+            // Evict oldest
+            if let Some((oldest_icao, _)) = self.entries.iter().min_by_key(|(_, &v)| v) {
+                let oldest = *oldest_icao;
+                self.entries.remove(&oldest);
+            }
+        }
+        self.entries.insert(icao, now_ms);
+    }
+
+    /// Check if an ICAO is recently confirmed (and not expired).
+    pub fn is_known(&mut self, icao: u32, now_ms: u64) -> bool {
+        if self.ttl_ms == 0 {
+            return false;
+        }
+        // Expire stale entries
+        if self.ttl_ms > 0 {
+            let mut to_remove = Vec::new();
+            for (k, v) in self.entries.iter() {
+                if now_ms.saturating_sub(*v) > self.ttl_ms {
+                    to_remove.push(*k);
+                }
+            }
+            for k in to_remove {
+                self.entries.remove(&k);
+            }
+        }
+        if let Some(&t) = self.entries.get(&icao) {
+            now_ms.saturating_sub(t) <= self.ttl_ms
+        } else {
+            false
+        }
+    }
+}
+
 /// All decoding is air-gapped: no network dependency, no external keys.
 
 pub const CRC_POLY: u32 = 0x1FF_F409;
@@ -174,11 +233,32 @@ pub enum DecodedMessage {
         altitude_ft: Option<f64>,
     },
     /// DF18 Extended Squitter Ground Relay
-    GroundRelay {
+GroundRelay {
         icao24: u32,
         inner_df: DownlinkFormat,
         message: Box<DecodedMessage>,
     },
+}
+impl DecodedMessage {
+    /// ICAO24 of the transmitting aircraft for every variant.
+    pub fn icao24(&self) -> u32 {
+        match self {
+            DecodedMessage::Identity { icao24, .. } => *icao24,
+            DecodedMessage::AirbornePosition { icao24, .. } => *icao24,
+            DecodedMessage::SurfacePosition { icao24, .. } => *icao24,
+            DecodedMessage::Velocity { icao24, .. } => *icao24,
+            DecodedMessage::AircraftStatus { icao24, .. } => *icao24,
+            DecodedMessage::AllCallReply { icao24, .. } => *icao24,
+            DecodedMessage::CommBAltitudeReply { icao24, .. } => *icao24,
+            DecodedMessage::CommBIdentityReply { icao24, .. } => *icao24,
+            DecodedMessage::AirAirSurveillance { icao24, .. } => *icao24,
+            DecodedMessage::GroundRelay { icao24, message, .. } => {
+                // For ground relay, the outer ICAO is the relay station; the inner message
+                // has the original aircraft's ICAO. We return the inner one.
+                message.icao24()
+            }
+        }
+    }
 }
 
 /// Decoder outcome including repair bookkeeping for diagnostics.
@@ -214,8 +294,19 @@ fn try_single_bit_repair(frame: &[u8]) -> Option<(u128, usize)> {
     None
 }
 
-/// Decodes one raw Mode S frame (7 or 14 bytes).
+/// Decodes one raw Mode S frame (7 or 14 bytes) — without cache, only self-validating DFs.
 pub fn decode_frame(raw: &[u8]) -> Option<DecodeResult> {
+    decode_frame_with_cache(raw, &mut IcaoCache::new(0, 0), 0)
+}
+
+/// Decodes one raw Mode S frame with an ICAO cache for AP-frame validation.
+/// DF11/17/18 are self-validating (ICAO in plaintext); DF0/4/5/16/20/21 use
+/// Address/Parity (AP) and require a recently confirmed ICAO.
+pub fn decode_frame_with_cache(
+    raw: &[u8],
+    cache: &mut IcaoCache,
+    now_ms: u64,
+) -> Option<DecodeResult> {
     if !(raw.len() == 7 || raw.len() == 14) {
         return None;
     }
@@ -240,35 +331,84 @@ pub fn decode_frame(raw: &[u8]) -> Option<DecodeResult> {
         21 => DownlinkFormat::Df21,
         _ => return None,
     };
-    let mut repaired_bit = None;
 
-    // CRC check and optional single-bit repair for 14-byte frames
-    if raw.len() == 14 {
-        let icao_candidate = field(bits, 8, 24) as u32;
-        let rem = crc25(raw);
-        if rem != icao_candidate && rem != 0 {
-            match try_single_bit_repair(raw) {
-                Some((fixed, pos)) => {
-                    bits = fixed;
-                    repaired_bit = Some(pos);
-                }
-                None => return None,
-            }
-        }
-    } else if raw.len() == 7 {
-        // 56-bit frames: DF 0,4,5,11,16 - check CRC (remainder 0 or ICAO for DF11)
-        let rem = crc25(raw);
-        let icao_candidate = field(bits, 8, 24) as u32;
-        let crc_ok = match df {
-            11 => rem == 0 || rem == icao_candidate,
-            _ => rem == 0,
-        };
-        if !crc_ok {
-            return None;
-        }
+    // Enforce frame length per DF
+    let len_ok = match df {
+        0 | 4 | 5 | 11 => raw.len() == 7,
+        16 | 17 | 18 | 20 | 21 => raw.len() == 14,
+        _ => false,
+    };
+    if !len_ok {
+        return None;
     }
 
-    let icao24 = field(bits, 8, 24) as u32;
+    let mut repaired_bit = None;
+
+    // DF11/17/18: self-validating (ICAO in plaintext at bits 8..31)
+    // DF0/4/5/16/20/21: AP format - ICAO is in remainder (AP field)
+    let (valid, icao24) = if raw.len() == 14 {
+        // 112-bit frames: DF16/17/18/20/21
+        let icao_candidate = field(bits, 8, 24) as u32;
+        let rem = crc25(raw);
+        match df {
+            17 | 18 => {
+                // Self-validating: remainder == ICAO or 0 (even parity for DF18 relay)
+                if rem == icao_candidate || rem == 0 {
+                    (true, icao_candidate)
+                } else {
+                    match try_single_bit_repair(raw) {
+                        Some((fixed, pos)) => {
+                            let new_bits = u128::from_be_bytes({
+                                let mut buf = [0u8; 16];
+                                buf[..14].copy_from_slice(&fixed[..14]);
+                                buf
+                            });
+                            (true, field(new_bits, 8, 24) as u32)
+                        }
+                        None => (false, 0),
+                    }
+                }
+            }
+            16 | 20 | 21 => {
+                // AP frames: ICAO is the remainder (AP field). Require cache confirmation.
+                let icao = rem;
+                if cache.is_known(icao, now_ms) {
+                    (true, icao)
+                } else {
+                    (false, 0)
+                }
+            }
+            _ => (false, 0),
+        }
+    } else {
+        // 56-bit frames: DF0/4/5/11
+        let rem = crc25(raw);
+        let icao_candidate = field(bits, 8, 24) as u32;
+        match df {
+            11 => {
+                // DF11: remainder 0 (IC=0) or equals interrogator code (ICAO)
+                if rem == 0 || rem == icao_candidate {
+                    (true, icao_candidate)
+                } else {
+                    (false, 0)
+                }
+            }
+            0 | 4 | 5 => {
+                // AP frames: ICAO is the remainder. Require cache confirmation.
+                let icao = rem;
+                if cache.is_known(icao, now_ms) {
+                    (true, icao)
+                } else {
+                    (false, 0)
+                }
+            }
+            _ => (false, 0),
+        }
+    };
+
+    if !valid {
+        return None;
+    }
 
     let message = match df {
         17 | 18 => decode_extended_squitter(bits, icao24, df_enum)?,
