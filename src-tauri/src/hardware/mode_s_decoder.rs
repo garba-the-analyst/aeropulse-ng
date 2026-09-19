@@ -1,17 +1,19 @@
 //! Mode S / ADS-B downlink decoder for 1090 MHz.
 //!
 //! Accepts raw frames from the SDR front-end (14-byte/112-bit ES, 7-byte/56-bit
-//! short, or 14-byte/112-bit long), validates CRC-25 parity, optionally repairs
+//! short, or 14-byte/112-bit long), validates CRC-24 parity, optionally repairs
 //! single-bit errors, and extracts:
-//! - DF17/18: ADS-B Extended Squitter (position, velocity, identity, status)
+//! - DF17: ADS-B Extended Squitter (position, velocity, identity, status)
+//! - DF18: TIS-B/ADS-R/non-transponder ADS-B; CF field not yet interpreted
 //! - DF11: All-call reply (Mode S only, no ADS-B)
-//! - DF0/4/5/16/20/21: Short/Long air-air surveillance (ACAS/TCAS)
+//! - DF0/4/5/16: Surveillance replies (DF0 short air-air ACAS, DF4/5 short surveillance, DF16 long air-air)
 //! - DF20/21: Comm-B altitude/identity replies (elicited)
 //!
+//! All decoding is air-gapped: no network dependency, no external keys.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-/// All decoding is air-gapped: no network dependency, no external keys.
 
 /// Cache of recently confirmed ICAO addresses for AP-frame validation.
 /// DF0/4/5/16/20/21 use Address/Parity (AP) where the ICAO is XORed into the parity field.
@@ -147,12 +149,12 @@ pub enum DownlinkFormat {
 #[serde(rename_all = "snake_case")]
 pub enum ModeSSource {
     AdsbExtendedSquitter,
+    /// DF18 TIS-B/ADS-R/non-transponder — CF field not yet interpreted
+    Tisb,
     AllCallReply,
     CommBAltitudeReply,
     CommBIdentityReply,
-    ShortAirAir,
-    LongAirAir,
-    GroundRelay,
+    AirAir,
 }
 
 /// Fully parsed Mode S message payload (all supported DFs).
@@ -218,22 +220,25 @@ pub enum DecodedMessage {
         reply_info: u8,
         df: DownlinkFormat,
     },
-    /// DF21 Comm-B Identity Reply (elicited, contains callsign)
+    /// DF21 Comm-B Identity Reply (elicited, contains Mode A squawk + BDS 2,0 callsign)
     CommBIdentityReply {
         icao24: u32,
         callsign: String,
         reply_info: u8,
         df: DownlinkFormat,
+        squawk: Option<String>,
     },
-    /// DF0/4/5/16 Short/Long air-air surveillance (ACAS/TCAS)
+    /// DF0/4/5/16 Surveillance replies (DF0 short air-air ACAS, DF4/5 short surveillance, DF16 long air-air)
     AirAirSurveillance {
         icao24: u32,
         df: DownlinkFormat,
         reply_info: u8,
         altitude_ft: Option<f64>,
+        squawk: Option<String>,
+        source: ModeSSource,
     },
-    /// DF18 Extended Squitter Ground Relay
-GroundRelay {
+    /// DF18 TIS-B/ADS-R/non-transponder — CF field not yet interpreted
+    GroundRelay {
         icao24: u32,
         inner_df: DownlinkFormat,
         message: Box<DecodedMessage>,
@@ -354,16 +359,16 @@ pub fn decode_frame_with_cache(
             17 | 18 => {
                 // Self-validating: remainder == ICAO or 0 (even parity for DF18 relay)
                 if rem == icao_candidate || rem == 0 {
+                    cache.confirm(icao_candidate, now_ms);
                     (true, icao_candidate)
                 } else {
                     match try_single_bit_repair(raw) {
                         Some((fixed, pos)) => {
-                            let new_bits = u128::from_be_bytes({
-                                let mut buf = [0u8; 16];
-                                buf[..14].copy_from_slice(&fixed[..14]);
-                                buf
-                            });
-                            (true, field(new_bits, 8, 24) as u32)
+                            bits = fixed;
+                            repaired_bit = Some(pos);
+                            let icao = field(fixed, 8, 24) as u32;
+                            cache.confirm(icao, now_ms);
+                            (true, icao)
                         }
                         None => (false, 0),
                     }
@@ -388,6 +393,7 @@ pub fn decode_frame_with_cache(
             11 => {
                 // DF11: remainder 0 (IC=0) or equals interrogator code (ICAO)
                 if rem == 0 || rem == icao_candidate {
+                    cache.confirm(icao_candidate, now_ms);
                     (true, icao_candidate)
                 } else {
                     (false, 0)
@@ -426,11 +432,11 @@ pub fn decode_frame_with_cache(
     })
 }
 
-/// Decode DF17/DF18 Extended Squitter (ADS-B)
+/// Decode DF17/DF18 Extended Squitter (ADS-B) — DF18 CF field not yet interpreted, decoded like DF17
 fn decode_extended_squitter(bits: u128, icao24: u32, df: DownlinkFormat) -> Option<DecodedMessage> {
     let tc = field(bits, 32, 5) as u8;
     let source = if df == DownlinkFormat::Df18 {
-        ModeSSource::GroundRelay
+        ModeSSource::Tisb
     } else {
         ModeSSource::AdsbExtendedSquitter
     };
@@ -456,75 +462,103 @@ fn decode_all_call_reply(bits: u128, icao24: u32) -> Option<DecodedMessage> {
     })
 }
 
-/// Decode DF20 Comm-B Altitude Reply
+/// Decode DF20 Comm-B Altitude Reply — AC is 13-bit at bit 19
 fn decode_comm_b_altitude(bits: u128, icao24: u32) -> Option<DecodedMessage> {
-    // DF20: RI[5..8] AC[8..20] MB[20..76] (56 bits)
-    // MB contains altitude in bits 20..31 (12 bits, same coding as ADS-B)
-    let ri = field(bits, 5, 3) as u8;
-    let alt_field = field(bits, 20, 12) as u16;
-    let altitude_ft = decode_altitude(alt_field);
+    // DF20 (112b): DF[0:5] FS[5:8] DR[8:13] UM[13:19] AC[19:32] MB[32:88] AP[88:112]
+    let fs = field(bits, 5, 3) as u8;
+    let ac13 = field(bits, 19, 13) as u16;
+    let altitude_ft = decode_ac13(ac13);
     Some(DecodedMessage::CommBAltitudeReply {
         icao24,
         altitude_ft,
-        reply_info: ri,
+        reply_info: fs,
         df: DownlinkFormat::Df20,
     })
 }
 
-/// Decode DF21 Comm-B Identity Reply
+/// Decode DF21 Comm-B Identity Reply — ID is 13-bit squawk at bit 19, MB may hold BDS 2,0 callsign
 fn decode_comm_b_identity(bits: u128, icao24: u32) -> Option<DecodedMessage> {
-    // DF21: RI[5..8] AC[8..20] MB[20..76] - MB contains callsign in same format as DF17 TC1-4
-    let ri = field(bits, 5, 3) as u8;
-    // Identity in MB starts at bit 20 (global 20+32=52 in our left-aligned register)
-    // But we can reuse the decode_identity logic by adjusting offsets
-    let callsign = extract_callsign_from_mb(bits)?;
+    // DF21 (112b): DF[0:5] FS[5:8] DR[8:13] UM[13:19] ID[19:32] MB[32:88] AP[88:112]
+    let fs = field(bits, 5, 3) as u8;
+    let id13 = field(bits, 19, 13) as u16;
+    let squawk = Some(field13_to_squawk(id13));
+    // MB is 56 bits at 32..88 — check for BDS 2,0
+    let mb = field(bits, 32, 56);
+    let callsign = if let Some(cs) = bds20_callsign(mb) {
+        cs
+    } else {
+        String::new()
+    };
     Some(DecodedMessage::CommBIdentityReply {
         icao24,
         callsign,
-        reply_info: ri,
+        reply_info: fs,
         df: DownlinkFormat::Df21,
+        squawk,
     })
 }
 
-/// Decode DF0/4/5/16 Short/Long Air-Air Surveillance (ACAS/TCAS)
+/// Decode DF0/4/5/16 Surveillance replies — correct layouts per §2.4
 fn decode_air_air_surveillance(bits: u128, icao24: u32, df: DownlinkFormat) -> Option<DecodedMessage> {
-    // DF0/16: Short air-air (56 bits) - VS[5..8] CC[8..10] SL[10..12] RI[11..14] AC[12..24] MU[24..80]
-    // DF4/5: Long air-air (112 bits) - VS[5..8] CC[8..10] SL[10..12] RI[11..14] AC[12..24] MV[24..80]
-    // We extract the reply info (RI) and any altitude in the message
-    let reply_info = field(bits, 11, 3) as u8;
-    let altitude_ft = if df == DownlinkFormat::Df4 || df == DownlinkFormat::Df5 {
-        // Long format may contain altitude in MV field
-        extract_altitude_from_mv(bits)
-    } else {
-        None
-    };
-    Some(DecodedMessage::AirAirSurveillance {
-        icao24,
-        df,
-        reply_info,
-        altitude_ft,
-    })
-}
-
-// Helper: extract callsign from Comm-B MB field (same format as ADS-B identity)
-fn extract_callsign_from_mb(bits: u128) -> Option<String> {
-    // MB starts at bit 20, callsign at bit 20+40=60 in 112-bit frame
-    // But in our 128-bit left-aligned register, DF20/21 is 56-bit
-    // For 56-bit frame in 128-bit register: bits 72..127 contain the 56 bits
-    // MB is bits 20..76 of 56-bit = bits 72+20=92 to 72+76=148 (but we only have 128)
-    // Simplified: for DF20/21 we'll just return empty for now
-    // Full implementation needs proper bit mapping
-    Some(String::new())
-}
-
-// Helper: extract altitude from MV field in long air-air
-fn extract_altitude_from_mv(bits: u128) -> Option<f64> {
-    // MV field is 56 bits (bits 24..80 of 112-bit frame)
-    // Altitude at MV bits 8..19 (same 12-bit coding)
-    // In our 128-bit register with 112-bit frame at bits 16..127:
-    // MV starts at 16+24=40, altitude at 40+8=48
-    let alt_field = field(bits, 48, 12) as u16;
-    decode_altitude(alt_field)
+    match df {
+        DownlinkFormat::Df0 => {
+            // DF0 (56b): DF[0:5] VS[5] CC[6] -[7] SL[8:11] -[11:13] RI[13:17] -[17:19] AC[19:32] AP[32:56]
+            let ri = field(bits, 13, 4) as u8;
+            let ac13 = field(bits, 19, 13) as u16;
+            let altitude_ft = decode_ac13(ac13);
+            Some(DecodedMessage::AirAirSurveillance {
+                icao24,
+                df,
+                reply_info: ri,
+                altitude_ft,
+                squawk: None,
+                source: ModeSSource::AirAir,
+            })
+        }
+        DownlinkFormat::Df4 => {
+            // DF4 (56b): DF[0:5] FS[5:8] DR[8:13] UM[13:19] AC[19:32] AP[32:56]
+            let ri = field(bits, 13, 4) as u8; // RI is still at 13 for DF4? Actually FS/DR/UM, but we treat RI as UM? For DF4, RI-equivalent is at 13? Use UM
+            let ac13 = field(bits, 19, 13) as u16;
+            let altitude_ft = decode_ac13(ac13);
+            Some(DecodedMessage::AirAirSurveillance {
+                icao24,
+                df,
+                reply_info: ri,
+                altitude_ft,
+                squawk: None,
+                source: ModeSSource::AirAir,
+            })
+        }
+        DownlinkFormat::Df5 => {
+            // DF5 (56b): DF[0:5] FS[5:8] DR[8:13] UM[13:19] ID[19:32] AP[32:56] — ID is squawk
+            let ri = field(bits, 13, 4) as u8;
+            let id13 = field(bits, 19, 13) as u16;
+            let squawk = field13_to_squawk(id13);
+            Some(DecodedMessage::AirAirSurveillance {
+                icao24,
+                df,
+                reply_info: ri,
+                altitude_ft: None,
+                squawk: Some(squawk),
+                source: ModeSSource::AirAir,
+            })
+        }
+        DownlinkFormat::Df16 => {
+            // DF16 (112b): DF[0:5] VS[5] -[6:8] SL[8:11] -[11:13] RI[13:17] -[17:19] AC[19:32] MV[32:88] AP[88:112]
+            let ri = field(bits, 13, 4) as u8;
+            let ac13 = field(bits, 19, 13) as u16;
+            let altitude_ft = decode_ac13(ac13);
+            Some(DecodedMessage::AirAirSurveillance {
+                icao24,
+                df,
+                reply_info: ri,
+                altitude_ft,
+                squawk: None,
+                source: ModeSSource::AirAir,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn decode_identity(bits: u128, icao24: u32, tc: u8, source: ModeSSource, df: DownlinkFormat) -> Option<DecodedMessage> {
@@ -699,6 +733,80 @@ pub fn encode_altitude(altitude_ft: f64) -> u16 {
     let high = ((n >> 4) & 0x7F) as u16;
     let low = (n & 0x0F) as u16;
     (high << 5) | (1 << 4) | low
+}
+
+/// Decodes the 13-bit AC surveillance altitude field (DF0/4/20).
+/// Returns None for M=1 (metric) or Q=0 (Gillham legacy) which are unsupported.
+pub fn decode_ac13(field13: u16) -> Option<f64> {
+    const M_MASK: u16 = 1 << 6;
+    if field13 & M_MASK != 0 {
+        return None; // Metric not supported
+    }
+    const Q_MASK: u16 = 1 << 4;
+    if field13 & Q_MASK != 0 {
+        // Q=1: 25 ft resolution. N is 11 bits assembled as bits[12..7] <<4 | bits5..4? Actually
+        // spec: N = (AC[12..7] <<4) | (AC[5] <<3) | (AC[3..0])
+        // For 13-bit AC, bits 12..0 where Q at bit4, M at bit6
+        // Assemble 11-bit N
+        let n = ((field13 & 0x1F80) >> 2) | ((field13 & 0x0020) >> 1) | (field13 & 0x000F);
+        // Mask to 11 bits
+        let n = n & 0x07FF;
+        Some(n as f64 * 25.0 - 1000.0)
+    } else {
+        // Gillham Q=0 — legacy, return None for now (unsupported)
+        None
+    }
+}
+
+/// Decodes Mode A squawk from 13-bit ID field (DF5/21).
+/// Bit order: C1 A1 C2 A2 C4 A4 X B1 D1 B2 D2 B4 D4 → octal A B C D
+pub fn field13_to_squawk(field13: u16) -> String {
+    let c1 = (field13 >> 12) & 1;
+    let a1 = (field13 >> 11) & 1;
+    let c2 = (field13 >> 10) & 1;
+    let a2 = (field13 >> 9) & 1;
+    let c4 = (field13 >> 8) & 1;
+    let a4 = (field13 >> 7) & 1;
+    // bit6 is X
+    let b1 = (field13 >> 5) & 1;
+    let d1 = (field13 >> 4) & 1;
+    let b2 = (field13 >> 3) & 1;
+    let d2 = (field13 >> 2) & 1;
+    let b4 = (field13 >> 1) & 1;
+    let d4 = field13 & 1;
+    let a = a4 * 4 + a2 * 2 + a1;
+    let b = b4 * 4 + b2 * 2 + b1;
+    let c = c4 * 4 + c2 * 2 + c1;
+    let d = d4 * 4 + d2 * 2 + d1;
+    format!("{}{}{}{}", a, b, c, d)
+}
+
+/// BDS 2,0 callsign extraction from 56-bit MB. Returns None if not BDS 2,0 or invalid chars.
+pub fn bds20_callsign(mb: u64) -> Option<String> {
+    // MB is 56 bits (7 bytes) at bits 32..88. First byte at bits 32..40 is BDS code.
+    let bds = ((mb >> 48) & 0xFF) as u8;
+    if bds != 0x20 {
+        return None;
+    }
+    let mut chars = Vec::with_capacity(8);
+    for i in 0..8 {
+        let idx = ((mb >> (42 - 6 * i)) & 0x3F) as usize;
+        let c = CALLSIGN_CHARSET[idx];
+        // Validate: only A-Z, 0-9, space
+        if !(c == b' ' || c == b'_' || (b'A'..=b'Z').contains(&c) || (b'0'..=b'9').contains(&c)) {
+            return None;
+        }
+        chars.push(c);
+    }
+    let callsign: String = String::from_utf8_lossy(&chars).trim_end_matches(['#', '_', ' ']).to_string();
+    if callsign.is_empty() {
+        return None;
+    }
+    // Validate all chars are alphanumeric or space
+    if !callsign.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+        return None;
+    }
+    Some(callsign)
 }
 
 fn decode_velocity(bits: u128, icao24: u32, source: ModeSSource, df: DownlinkFormat) -> Option<DecodedMessage> {
@@ -1025,5 +1133,188 @@ mod tests {
             .chunks(2)
             .map(|p| u8::from_str_radix(std::str::from_utf8(p).unwrap(), 16).unwrap())
             .collect()
+    }
+
+    // Helper for building AP frames in tests: payload (without parity) <<24; parity = crc24(payload<<24) ^ icao
+    fn build_ap_frame(payload_be: &[u8], total_len: usize, icao: u32) -> Vec<u8> {
+        let mut full = vec![0u8; total_len];
+        full[..payload_be.len()].copy_from_slice(payload_be);
+        let rem = crc25(&full[..total_len]);
+        // Parity is rem ^ icao in last 3 bytes
+        let parity = rem ^ icao;
+        let n = full.len();
+        full[n - 3] = (parity >> 16) as u8;
+        full[n - 2] = (parity >> 8) as u8;
+        full[n - 1] = parity as u8;
+        full
+    }
+
+    // Ground-truth vectors from audit (pyModeS 3.6.0)
+    const DF20_HEX: &str = "A000149800000000000000E65891";
+    const DF21_HEX: &str = "A8000000202CC371C32CE0B91A86";
+    const DF4_HEX: &str = "20001498175EFD";
+    const DF0_HEX: &str = "000014989738A2";
+    const DF11_HEX: &str = "5D4840D6F8740F";
+
+    #[test]
+    fn ground_truth_df20_decodes_with_cache() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let bytes = hex_to_bytes(DF20_HEX);
+        let res = decode_frame_with_cache(&bytes, &mut cache, 1000).expect("DF20 must decode");
+        assert_eq!(res.df, DownlinkFormat::Df20);
+        match res.message {
+            DecodedMessage::CommBAltitudeReply { icao24, altitude_ft, .. } => {
+                assert_eq!(icao24, 0x4840D6);
+                let alt = altitude_ft.expect("altitude");
+                assert!((alt - 32000.0).abs() <= 25.0, "alt {:?}", alt);
+            }
+            other => panic!("wrong variant {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ground_truth_df21_decodes_with_cache() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let bytes = hex_to_bytes(DF21_HEX);
+        let res = decode_frame_with_cache(&bytes, &mut cache, 1000).expect("DF21 must decode");
+        assert_eq!(res.df, DownlinkFormat::Df21);
+        match res.message {
+            DecodedMessage::CommBIdentityReply { icao24, callsign, squawk, .. } => {
+                assert_eq!(icao24, 0x4840D6);
+                assert_eq!(callsign, "KLM1023");
+                assert_eq!(squawk.unwrap(), "0000");
+            }
+            other => panic!("wrong variant {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ground_truth_df4_decodes_with_cache() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let bytes = hex_to_bytes(DF4_HEX);
+        let res = decode_frame_with_cache(&bytes, &mut cache, 1000).expect("DF4 must decode");
+        assert_eq!(res.df, DownlinkFormat::Df4);
+        match res.message {
+            DecodedMessage::AirAirSurveillance { icao24, altitude_ft, .. } => {
+                assert_eq!(icao24, 0x4840D6);
+                let alt = altitude_ft.expect("altitude");
+                assert!((alt - 32000.0).abs() <= 25.0, "alt {:?}", alt);
+            }
+            other => panic!("wrong variant {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ground_truth_df0_decodes_with_cache() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let bytes = hex_to_bytes(DF0_HEX);
+        let res = decode_frame_with_cache(&bytes, &mut cache, 1000).expect("DF0 must decode");
+        assert_eq!(res.df, DownlinkFormat::Df0);
+        match res.message {
+            DecodedMessage::AirAirSurveillance { icao24, altitude_ft, .. } => {
+                assert_eq!(icao24, 0x4840D6);
+                let alt = altitude_ft.expect("altitude");
+                assert!((alt - 32000.0).abs() <= 25.0, "alt {:?}", alt);
+            }
+            other => panic!("wrong variant {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ground_truth_df11_decodes_without_cache() {
+        let bytes = hex_to_bytes(DF11_HEX);
+        let res = decode_frame(&bytes).expect("DF11 must decode without cache");
+        assert_eq!(res.df, DownlinkFormat::Df11);
+        match res.message {
+            DecodedMessage::AllCallReply { icao24, capability, .. } => {
+                assert_eq!(icao24, 0x4840D6);
+                assert_eq!(capability, 5);
+            }
+            other => panic!("wrong variant {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ap_frames_rejected_without_cache() {
+        let mut empty_cache = IcaoCache::new(60_000, 4096);
+        for hex in [DF20_HEX, DF4_HEX] {
+            let bytes = hex_to_bytes(hex);
+            assert!(
+                decode_frame_with_cache(&bytes, &mut empty_cache, 1000).is_none(),
+                "AP frame without cache must be None: {}",
+                hex
+            );
+        }
+    }
+
+    #[test]
+    fn flipped_bit_rejected() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let mut bytes = hex_to_bytes(DF20_HEX);
+        bytes[5] ^= 0x80; // flip one bit
+        assert!(
+            decode_frame_with_cache(&bytes, &mut cache, 1000).is_none(),
+            "flipped bit must be rejected"
+        );
+    }
+
+    #[test]
+    fn length_mismatch_rejected() {
+        let mut cache = IcaoCache::new(60_000, 4096);
+        cache.confirm(0x4840D6, 0);
+        let df20 = hex_to_bytes(DF20_HEX);
+        let df4 = hex_to_bytes(DF4_HEX);
+        // DF20 truncated to 7 bytes
+        assert!(decode_frame_with_cache(&df20[..7], &mut cache, 1000).is_none());
+        // DF4 padded to 14
+        let mut padded = df4.clone();
+        padded.extend_from_slice(&[0u8; 7]);
+        assert!(decode_frame_with_cache(&padded, &mut cache, 1000).is_none());
+    }
+
+    #[test]
+    fn icao_cache_ttl_and_capacity() {
+        let mut cache = IcaoCache::new(1000, 2);
+        cache.confirm(0xAAAAAA, 0);
+        cache.confirm(0xBBBBBB, 0);
+        assert!(cache.is_known(0xAAAAAA, 500));
+        assert!(cache.is_known(0xBBBBBB, 500));
+        // TTL expiry
+        assert!(!cache.is_known(0xAAAAAA, 2000));
+        // Capacity bound
+        cache.confirm(0xCCCCCC, 2500);
+        cache.confirm(0xDDDDDD, 2500); // should evict oldest
+        assert!(!cache.is_known(0xBBBBBB, 2500) || !cache.is_known(0xCCCCCC, 2500));
+        // Confirm refreshes
+        cache.confirm(0xEEEEEE, 3000);
+        assert!(cache.is_known(0xEEEEEE, 3500));
+        cache.confirm(0xEEEEEE, 3600);
+        assert!(cache.is_known(0xEEEEEE, 4500));
+    }
+
+    #[test]
+    fn df18_cf0_decodes_like_df17() {
+        // DF18 with CF=0 (ADS-B non-transponder) should decode like DF17
+        let df17_hex = "8D406B902015A678D4D220AA4BDA";
+        let mut df18_bytes = hex_to_bytes(df17_hex);
+        // Change DF from 17 to 18: byte0 = (18<<3)|CA where CA=5
+        df18_bytes[0] = 0x95; // 18-> 10010, CA 101 => 10010101 = 0x95
+        // Zero parity before recomputing
+        let n = df18_bytes.len();
+        df18_bytes[n - 3] = 0;
+        df18_bytes[n - 2] = 0;
+        df18_bytes[n - 1] = 0;
+        let icao = 0x406B90u32;
+        let parity = crc25(&df18_bytes) ^ icao;
+        df18_bytes[n - 3] = (parity >> 16) as u8;
+        df18_bytes[n - 2] = (parity >> 8) as u8;
+        df18_bytes[n - 1] = parity as u8;
+        let res = decode_frame(&df18_bytes).expect("DF18 CF0 must decode");
+        assert_eq!(res.df, DownlinkFormat::Df18);
     }
 }

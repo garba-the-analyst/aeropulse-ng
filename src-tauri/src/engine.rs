@@ -20,7 +20,9 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::hardware::mode_s_decoder::{cpr_global_decode, decode_frame, DecodedMessage};
+use crate::hardware::mode_s_decoder::{
+    cpr_global_decode, decode_frame_with_cache, DecodedMessage,
+};
 use crate::hardware::sdr_registry::UsbProbe;
 use crate::hardware::simulator::IngestEvent;
 use crate::kinematics::dead_reckoning::{project_leader_line, SiteOrigin};
@@ -131,6 +133,7 @@ pub struct SurveillanceEngine {
     sidecar_online: bool,
     emergency_override_until_ms: u64,
     hardware: Vec<HardwareStatus>,
+    icao_cache: crate::hardware::mode_s_decoder::IcaoCache,
 }
 
 impl SurveillanceEngine {
@@ -192,6 +195,7 @@ impl SurveillanceEngine {
                 .map(|b| b.status)
                 .collect()
             },
+            icao_cache: crate::hardware::mode_s_decoder::IcaoCache::new(60_000, 4096),
         }
     }
 
@@ -291,7 +295,7 @@ impl SurveillanceEngine {
     }
 
     fn ingest_frame(&mut self, bytes: &[u8], now_ms: u64) {
-        let Some(result) = decode_frame(bytes) else {
+        let Some(result) = decode_frame_with_cache(bytes, &mut self.icao_cache, now_ms) else {
             return;
         };
         let msg = result.message;
@@ -315,101 +319,7 @@ impl SurveillanceEngine {
         let ts = self.tracks.entry(icao_key.clone()).or_insert_with(|| TrackState::new(now_ms));
         ts.messages_seen += 1;
 
-        match msg {
-            DecodedMessage::Identity { callsign, .. } => {
-                if !callsign.is_empty() {
-                    ts.callsign = callsign.clone();
-                    ts.class = infer_class(&callsign);
-                }
-            }
-            DecodedMessage::AirbornePosition {
-                odd,
-                lat_cpr,
-                lon_cpr,
-                altitude_ft,
-                ..
-            } => {
-                // Take the opposite-parity slot for pairing attempts.
-                let opposite = if odd {
-                    ts.cpr_even.take()
-                } else {
-                    ts.cpr_odd.take()
-                };
-
-                let current = CprSlot {
-                    lat_cpr,
-                    lon_cpr,
-                    received_ms: now_ms,
-                };
-
-                let mut solved = false;
-                if let Some(prev) =
-                    opposite.filter(|p| now_ms.saturating_sub(p.received_ms) <= CPR_PAIR_WINDOW_MS)
-                {
-                    let (even_pair, odd_pair) = if odd {
-                        ((prev.lat_cpr, prev.lon_cpr), (lat_cpr, lon_cpr))
-                    } else {
-                        ((lat_cpr, lon_cpr), (prev.lat_cpr, prev.lon_cpr))
-                    };
-                    if let Some(pos) = cpr_global_decode(even_pair, odd_pair, odd) {
-                        let (x_m, y_m) =
-                            self.cfg.site.to_local(pos.latitude_deg, pos.longitude_deg);
-                        ts.ekf.fuse_position(x_m, y_m, altitude_ft, now_ms as f64 / 1000.0);
-                        ts.last_position_ms = now_ms;
-                        solved = true;
-                    }
-                }
-
-                // Whichever frame arrived becomes its parity's latest slot.
-                if odd {
-                    ts.cpr_odd = Some(current);
-                } else {
-                    ts.cpr_even = Some(current);
-                }
-                let _ = solved;
-            }
-            DecodedMessage::Velocity {
-                ground_speed_kt,
-                track_deg,
-                vertical_rate_fpm,
-                ..
-            } => {
-                if let (Some(gs), Some(trk)) = (ground_speed_kt, track_deg) {
-                    ts.ekf.fuse_velocity(gs, trk, vertical_rate_fpm.unwrap_or(0.0), now_ms as f64 / 1000.0);
-                    ts.last_velocity_ms = Some(now_ms);
-                }
-            }
-            DecodedMessage::AircraftStatus { emergency_state, .. } => {
-                if (1..=6).contains(&emergency_state) && ts.squawk.is_empty() {
-                    ts.squawk = "7700".into();
-                }
-            }
-            DecodedMessage::SurfacePosition { .. } => {}
-            // New DF types - passive ingestion for track enrichment
-            DecodedMessage::AllCallReply { icao24, .. } => {
-                // Mark track as Mode S capable (replies to interrogator)
-                ts.mode_s_capable = true;
-            }
-            DecodedMessage::CommBAltitudeReply { altitude_ft, .. } => {
-                if let Some(alt) = altitude_ft {
-                    ts.last_baro_altitude_ft = Some(alt);
-                }
-            }
-            DecodedMessage::CommBIdentityReply { callsign, .. } => {
-                if !callsign.is_empty() {
-                    ts.callsign = callsign.clone();
-                    ts.class = infer_class(&callsign);
-                }
-            }
-            DecodedMessage::AirAirSurveillance { .. } => {
-                // ACAS/TCAS reply - mark as potentially military
-                ts.mode_s_capable = true;
-            }
-DecodedMessage::GroundRelay { message, .. } => {
-                // Recursively process the relayed message
-                Self::ingest_mode_s_inner(ts, *message, now_ms, &self.cfg.site);
-            }
-        }
+        Self::ingest_mode_s_inner(ts, msg, now_ms, &self.cfg.site);
     }
 
     fn ingest_mode_s_inner(ts: &mut TrackState, msg: DecodedMessage, now_ms: u64, site: &crate::kinematics::SiteOrigin) {
