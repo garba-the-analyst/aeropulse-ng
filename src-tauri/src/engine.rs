@@ -386,8 +386,29 @@ impl SurveillanceEngine {
                 }
             }
             DecodedMessage::AircraftStatus { emergency_state, .. } => {
-                if (1..=6).contains(&emergency_state) && ts.squawk.is_empty() {
-                    ts.squawk = "7700".into();
+                match emergency_state {
+                    1 => {
+                        if ts.squawk.is_empty() {
+                            ts.squawk = "7700".into();
+                        }
+                        ts.alert = AlertState::Emergency;
+                    }
+                    4 => {
+                        if ts.squawk.is_empty() {
+                            ts.squawk = "7600".into();
+                        }
+                        ts.alert = AlertState::RadioFailure;
+                    }
+                    5 => {
+                        if ts.squawk.is_empty() {
+                            ts.squawk = "7500".into();
+                        }
+                        ts.alert = AlertState::Hijack;
+                    }
+                    2 | 3 | 6 => {
+                        ts.alert = AlertState::Emergency;
+                    }
+                    _ => {}
                 }
             }
             DecodedMessage::SurfacePosition { .. } => {}
@@ -484,6 +505,24 @@ DecodedMessage::GroundRelay { message, .. } => {
                         icao24: verdict.icao24,
                         reason: verdict.reason,
                     });
+                }
+            }
+            // Altitude consistency check: EKF vs Comm-B/DF4/20 baro
+            const ALT_MISMATCH_THRESHOLD_FT: f64 = 300.0;
+            for (icao, ts) in self.tracks.iter() {
+                if let Some(baro) = ts.last_baro_altitude_ft {
+                    if ts.ekf.is_initialised() {
+                        let ekf_alt_ft = ts.ekf.state()[2] / 0.3048;
+                        if (ekf_alt_ft - baro).abs() > ALT_MISMATCH_THRESHOLD_FT {
+                            anomaly_notes.push(AnomalyNote {
+                                icao24: icao.clone(),
+                                reason: format!(
+                                    "ALT_MISMATCH EKF:{:.0}ft vs BARO:{:.0}ft",
+                                    ekf_alt_ft, baro
+                                ),
+                            });
+                        }
+                    }
                 }
             }
         }
