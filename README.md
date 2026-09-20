@@ -5,7 +5,7 @@
 AeroPulse-NG turns commodity software-defined radios and a standard PC into a working
 tactical air-traffic surveillance workstation for civil ATC (NAMA) and military command
 operations (NAF). It ingests over-the-air aviation telemetry, filters it through a
-6-state Extended Kalman Filter, detects separation conflicts with an R\*-tree-accelerated
+6-state Kalman filter (constant-velocity, linear), detects separation conflicts with an R\*-tree-accelerated
 STCA engine, fuses three independent weather sources into one 3D matrix — all with
 **zero internet dependency**.
 
@@ -18,8 +18,13 @@ STCA engine, fuses three independent weather sources into one 3D matrix — all 
 ## 1. Quick Start
 
 ```bash
+# Toolchain: Rust stable ≥1.78 via rust-toolchain.toml (Cargo.lock v4 committed)
+# Node 20+, Python 3.10+ (duckdb, pyserial, pytest)
+
 # One-shot verification battery (Rust + Python + TypeScript + bundle)
 ./scripts/verify.sh
+# Check versions agree across manifests
+./scripts/check-versions.sh
 
 # Full desktop application (dual windows, Rust runtime, sidecar)
 scripts/desktop.sh
@@ -42,7 +47,7 @@ Full setup prerequisites, first-run walkthrough and per-screen operations:
 |---|---|
 | ADS-B / Mode S reception (1090 MHz) | DF17 decode, CRC-24 single-bit repair, global CPR even/odd position solve, Gillham altitude codec, velocity & identity extraction |
 | ACARS VHF (131.550 MHz) | Frame sync, CCITT-CRC integrity, METAR/SPECI/D-ATIS classification |
-| Track filtering | 6-state EKF `[x,y,z,vx,vy,vz]` in local ENU metres, Joseph-form covariance update, Mahalanobis gating with acquisition warm-up |
+| Track filtering | 6-state Kalman filter (constant-velocity, linear) `[x,y,z,vx,vy,vz]` in local ENU metres, Joseph-form covariance update, Mahalanobis gating with acquisition warm-up — module `kinematics/ekf.rs` (historic name EKF retained) |
 | Dead reckoning | Constant-velocity coasting through RF dropouts; leader-line projection 120 s ahead |
 | Conflict detection | R\*-tree spatial index (Beckmann split + forced reinsertion) → pairwise time-stepped refinement against ICAO Doc 4444 minima inside a 120 s lookahead |
 | Weather fusion | AWOS serial (RS-485 via Python sidecar) + ACARS D-ATIS/METAR + Mode S BDS 4,4/4,5 registers → inverse-distance-weighted 3D matrix with ISA fallback and Harmattan dust-layer estimate |
@@ -74,7 +79,7 @@ Full setup prerequisites, first-run walkthrough and per-screen operations:
                                ▼ IngestEvent stream
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                    SURVEILLANCE ENGINE (engine.rs, 60 Hz)                │
-│   queue ► EKF predict ► fuse ► STCA scan ► anomaly scan ► geofence scan  │
+│   queue ► Kalman (CV) predict ► fuse ► STCA scan ► anomaly scan ► geofence scan  │
 │                 ▼                                                        │
 │      EngineSnapshot { tracks · FDBs · STCA · weather · status }          │
 └──────────────┬───────────────────────────────────────┬───────────────────┘
@@ -91,7 +96,7 @@ Detailed subsystem documentation lives next to the code:
 | Path | Contents |
 |---|---|
 | [`src-tauri/src/hardware/`](src-tauri/src/hardware/) | Signal decoding, SDR registry, synthetic feed |
-| [`src-tauri/src/kinematics/`](src-tauri/src/kinematics/) | Linear algebra, EKF, R\*-tree, STCA math |
+| [`src-tauri/src/kinematics/`](src-tauri/src/kinematics/) | Linear algebra, Kalman filter (CV) (`ekf.rs` historic), R\*-tree, STCA math |
 | [`src-tauri/src/weather_fusion/`](src-tauri/src/weather_fusion/) | BDS registers, ISA atmosphere, IDW interpolation |
 | [`src-tauri/src/defense/`](src-tauri/src/defense/) | Anomaly detection, geofencing, intercept solver |
 | [`src-tauri/src/commands/`](src-tauri/src/commands/) | Tauri IPC command surface |
@@ -122,7 +127,7 @@ consistent with NCAA's adoption of ICAO Annex 5. The single source of truth is
 degrees-true bearings, and the Doc 4444 separation *thresholds* — the safety logic
 evaluates the legal constants (5 NM / 1 000 ft) internally and renders their SI
 equivalents (**9.26 km / 305 m**) on screen. Engine internals never convert: the
-EKF integrates metres/m·s⁻¹ natively; DO-260B wire values decode to feet/knots and
+Kalman filter (constant-velocity, linear; module `ekf.rs` historic) integrates metres/m·s⁻¹ natively; DO-260B wire values decode to feet/knots and
 transform once at the presentation boundary.
 
 ---
@@ -131,12 +136,17 @@ transform once at the presentation boundary.
 
 ```text
 aeropulse-ng/
-├── scripts/                  verify.sh · desktop.sh · webkit-env.sh
-├── docs/                     USER_MANUAL.md · ARCHITECTURE.md
+├── scripts/                  verify.sh · desktop.sh · webkit-env.sh · build_pdfs.py · build_office.py · build_buy_sheets.py · gen_assets.py · check-versions.sh
+├── docs/
+│   ├── USER_MANUAL.md · ARCHITECTURE.md
+│   ├── pdf/                  generated PDFs (build_pdfs.py)
+│   ├── docx_pptx/            generated Office docs (build_office.py)
+│   ├── pitch/                executive-summary.md
+│   └── assets/               logo · architecture · radar-scope · fusion · timeline
 ├── src-tauri/                Rust core (Tauri v2 host)
 │   ├── src/
 │   │   ├── hardware/         decoders · registry · simulator     [+ README]
-│   │   ├── kinematics/       linalg · ekf · rtree · stca_math    [+ README]
+│   │   ├── kinematics/       linalg · ekf (Kalman filter, constant-velocity) · rtree · stca_math    [+ README]
 │   │   ├── weather_fusion/   bds_extractor · spatial_interp      [+ README]
 │   │   ├── defense/          dark_target · geofence · intercept  [+ README]
 │   │   ├── commands/         Tauri IPC handlers                  [+ README]
@@ -144,14 +154,16 @@ aeropulse-ng/
 │   │   ├── sidecar.rs        NDJSON process bridge
 │   │   ├── models.rs         shared wire contracts
 │   │   └── bin/aeropulse-headless.rs   ANSI tactical console
+│   ├── Cargo.toml · Cargo.lock (v4) · rust-toolchain.toml (stable ≥1.78)
 │   └── icons/                generated RGBA icon set
 ├── python-sidecar/           DuckDB recorder · AWOS reader       [+ README]
 ├── src/                      TypeScript workspace
-│   ├── components/           radar · hud · defense · shared      [+ README]
+│   ├── components/           radar · hud · defense · shared · comms (audio, simulated) [+ README]
 │   ├── hooks/                telemetry store · event bindings    [+ README]
 │   ├── lib/                  units policy · IPC accessors        [+ README]
 │   └── types/                mirrored wire contracts             [+ README]
-└── .github/workflows/        CI verification
+├── .github/workflows/        build-verification.yml · windows.yml
+└── rust-toolchain.toml       stable channel pin
 ```
 
 ---
@@ -159,15 +171,15 @@ aeropulse-ng/
 ## 6. Verification
 
 ```bash
-./scripts/verify.sh          # full battery — currently 108 checks green:
-                             #   Rust 90 · Python 14 · tsc strict · vite build
-npm run engine:test          # Rust only
+./scripts/verify.sh          # full battery — counts generated dynamically:
+                             #   e.g. Rust 108 · Python 21 · tsc strict · vite build (129 total)
+npm run engine:test          # Rust only (cargo test --no-default-features)
 npm run sidecar:test         # pytest only
 npm run typecheck            # TypeScript only
 ```
 
 Test coverage highlights: CRC-24 against published reference frames, CPR global
-solve round-trips across zone boundaries, EKF convergence under noise with outlier
+solve round-trips across zone boundaries, Kalman filter (constant-velocity) convergence under noise with outlier
 gating, R\*-tree integrity at 2 000 inserts, STCA conflict/divergence discrimination,
 ACARS checksum corruption handling, geofence entry/re-arm cycles, intercept solver
 feasibility envelope, end-to-end fusion pipeline over 110 simulated seconds.
@@ -181,7 +193,7 @@ feasibility envelope, end-to-end fusion pipeline over 110 simulated seconds.
 - **Hardware layer** — DF17/CPR/Gillham decode with single-bit repair; ACARS framing,
   CRC-16, weather classification; USB serial-lock registry (sysfs probe); deterministic
   six-aircraft simulator feeding the *production* decode path.
-- **Kinematics** — hand-rolled 6×6 Cholesky linear algebra; Joseph-form EKF with
+- **Kinematics** — hand-rolled 6×6 Cholesky linear algebra; Joseph-form Kalman filter (constant-velocity, linear; module `ekf.rs` historic) with
   acquisition-phase gate warm-up; WGS-84↔ENU transforms; full R\*-tree;
   time-stepped STCA detector.
 - **Weather fusion** — BDS 4,4/4,5 register codecs; ICAO standard atmosphere;
@@ -199,19 +211,18 @@ feasibility envelope, end-to-end fusion pipeline over 110 simulated seconds.
 - **Tooling** — one-command verification battery; sudo-free webkit dev environment
   builder; generated icon set.
 
-### Remaining ⬜ (roadmap)
+### Remaining ⬜ (roadmap — honest stubs)
 
-1. **Real RTL-SDR I/Q tap** — libusb sampling → ppm-correction → bit synchroniser
-   feeding `decode_frame()`; registry plumbing exists, DSP front-end is the gap.
-2. **Live FFT spectrum** — plot currently synthesised from message-rate telemetry;
-   replace with magnitudes from the real tap.
-3. **Physical AWOS wiring** — sentence parser + simulator ready; needs field cable
-   and port characterisation.
-4. **Comm-B BDS extraction from live DF20/21 frames** — codecs exist and are
-   round-trip tested; uplink interrogation scheduling pending.
-5. **Persistence of alerts/weather to DuckDB** — tables exist; track writer is wired,
-   alert writer is not.
-6. **Multi-site handover, RBAC views, offline map tiles** — see ARCHITECTURE roadmap.
+All items below are **not yet field-proven**; prototype is bench-runnable with synthetic feed only.
+
+1. **Real RTL-SDR I/Q tap** — libusb sampling → ppm-correction → bit synchroniser feeding `decode_frame()`; registry plumbing exists, DSP front-end is the gap.
+2. **Live FFT spectrum** — **stub (simulated)**: plot currently synthesised from message-rate telemetry; replace with magnitudes from the real tap.
+3. **Physical AWOS wiring** — sentence parser + simulator ready; needs field cable and port characterisation.
+4. **Comm-B BDS extraction from live DF20/21 frames** — codecs exist and are round-trip tested; uplink interrogation scheduling pending.
+5. **Persistence of alerts/weather to DuckDB** — tables exist; track writer is wired and tested, alert/weather writers are wired via NDJSON but field-validation is pending.
+6. **Audio panel — simulated only** — VHF frequency derived per-aircraft via deterministic hash (not an ATC assignment), synthetic white-noise static, hold-to-talk is UI-only with emergency inhibition and 30 s timeout; no real transmitter is driven (see `src/components/comms/AudioRoutingPanel.tsx`).
+7. **Multi-site handover, RBAC views, offline map tiles** — roadmap; vector PPI today, no map tiles.
+8. **Passive-RF chain & military classification** — passive radar is roadmap; `NAF`/`NGA`/`MIL` prefix heuristic is display-only, not authoritative (see `src-tauri/src/engine.rs`).
 
 ---
 
