@@ -82,6 +82,8 @@ function demoSnapshot(tMs: number): EngineSnapshot {
       coasting: false,
       position_sigma_m: 41,
       leader_line: leader,
+      mode_s_capable: true,
+      last_baro_altitude_ft: a.alt_ft,
     };
   });
 
@@ -105,14 +107,25 @@ function demoSnapshot(tMs: number): EngineSnapshot {
 
   return {
     tracks,
-    flight_data_blocks: tracks.map((t) => ({
-      icao24: t.icao24,
-      line1: `${t.callsign.padEnd(8)} ${String(Math.round(t.altitude_ft / 100)).padStart(3, "0")}`,
-      line2: `1090 ${Math.round(t.ground_speed_kt)}K ${t.squawk}`,
-      line3: `S-${t.squawk.length.toString().padStart(2, "0")}`,
-      color:
-        t.class === "civil" ? "#C7CDD3" : t.class === "military" ? "#9FA9B3" : "#D2A85A",
-    })),
+    flight_data_blocks: tracks.map((t) => {
+      let line3: string;
+      if (t.alert !== "none") {
+        line3 = t.alert === "emergency" ? "EMRG" : (t.alert as string).toUpperCase().slice(0, 4);
+      } else if (t.coasting) {
+        line3 = "DR";
+      } else {
+        const q = t.position_sigma_m < 30 ? "Q1" : t.position_sigma_m < 80 ? "Q2" : "Q3";
+        line3 = t.mode_s_capable ? `${q} MS` : q;
+      }
+      return {
+        icao24: t.icao24,
+        line1: `${t.callsign.padEnd(8)} ${String(Math.round(t.altitude_ft / 100)).padStart(3, "0")}`,
+        line2: `1090 ${Math.round(t.ground_speed_kt)}K ${t.squawk}`,
+        line3,
+        color:
+          t.class === "civil" ? "#C7CDD3" : t.class === "military" ? "#9FA9B3" : "#D2A85A",
+      };
+    }),
     stca_alerts: stca,
     geofence_breaches: [],
     anomalies:

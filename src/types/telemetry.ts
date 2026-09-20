@@ -36,6 +36,10 @@ export interface Track {
   position_sigma_m: number;
   /** Projected 2-minute trajectory as [lat, lon] vertices. */
   leader_line: [number, number][];
+  /** Mode S capable via DF11/DF0/4/5/16 replies (see engine). */
+  mode_s_capable: boolean;
+  /** Last barometric altitude from a Comm-B/DF4/DF20 reply, feet. */
+  last_baro_altitude_ft: number | null;
 }
 
 export interface FlightDataBlock {

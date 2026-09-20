@@ -317,7 +317,24 @@ impl FlightDataBlock {
         };
         let source = if track.coasting { "DR" } else { "1090" };
         let line3 = match track.alert {
-            AlertState::None => format!("S-{:02}", track.squawk.len()),
+            AlertState::None => {
+                if track.coasting {
+                    "DR".to_string()
+                } else {
+                    let q = if track.position_sigma_m < 30.0 {
+                        "Q1"
+                    } else if track.position_sigma_m < 80.0 {
+                        "Q2"
+                    } else {
+                        "Q3"
+                    };
+                    if track.mode_s_capable {
+                        format!("{} MS", q)
+                    } else {
+                        q.to_string()
+                    }
+                }
+            }
             AlertState::Emergency => "EMRG".to_string(),
             AlertState::RadioFailure => "RADO".to_string(),
             AlertState::Hijack => "HIJK".to_string(),
