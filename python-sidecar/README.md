@@ -1,7 +1,7 @@
 # Python Sidecar — Persistence & AWOS Bridge
 
 Path: `python-sidecar/`
-Tests: 14 pytest cases · live-process smoke verified
+Tests: 21 pytest cases · live-process smoke verified (fresh DB, migration, partial-batch, malformed-track subprocess)
 
 A single-responsibility companion process serving two jobs the Rust core
 deliberately does not own: **DuckDB flight recording** and **RS-485 AWOS serial
@@ -16,7 +16,10 @@ than ever taking surveillance down.
 Rust → Python                          Python → Rust
 {"cmd":"init","db_path":"..."}   ──►   {"ev":"ready"}
 {"cmd":"log_tracks","tracks":[…]} ──►  {"ev":"db_ack","rows":N}
+{"cmd":"log_alerts","alerts":[…]} ──►  {"ev":"db_ack","rows":N}
+{"cmd":"log_weather",…}           ──►  {"ev":"db_ack","rows":1}
 {"cmd":"shutdown"}                ──►  {"ev":"awos", qnh_hpa… observed_ms}
+                                        {"ev":"error","cmd":...,"message":...}
 ```
 
 Malformed inbound lines log to stderr and are skipped. Every outbound frame is
@@ -60,11 +63,15 @@ text yields whatever decoded, plus `is_harmattan_profile()` haze heuristic
 
 ## DuckDB Engine
 
-* Schema applied idempotently from `schema.sql`.
+* Schema applied idempotently from `schema.sql`; migration adds `mode_s_capable`
+  and `last_baro_altitude_ft` to old DBs via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 * Track batches insert transactionally (`BEGIN … COMMIT`, rollback on error);
   numeric coercion failures become SQL NULL rather than exceptions.
-* Durability proven across close/reopen in tests; alert/weather tables exist and
-  `record_weather()` is wired — per-row alert writing is roadmap work.
+  Partial batches insert valid rows and skip malformed rows (per-row validation).
+* `insert_stca_alerts(alerts)` and `record_weather(...)` are wired via
+  NDJSON `log_alerts` / `log_weather` (see `python-sidecar/main.py` and
+  `src-tauri/src/sidecar.rs::encode_log_alerts / encode_log_weather`).
+  Durability proven across close/reopen in tests.
 
 ## Running Standalone
 

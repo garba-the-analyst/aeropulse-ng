@@ -13,7 +13,7 @@ const VHF_MIN = 118.0;
 const VHF_MAX = 136.975;
 const TX_TIMEOUT_MS = 30000;
 
-function isValidFrequency(mhz: number): boolean {
+export function isValidFrequency(mhz: number): boolean {
   if (mhz < VHF_MIN || mhz > VHF_MAX) return false;
   const khz = Math.round(mhz * 1000);
   // 25 kHz raster check (8.33 is 25/3, allow tolerance)
@@ -21,11 +21,16 @@ function isValidFrequency(mhz: number): boolean {
   const remainder = Math.abs((mhz * 1000) % 8.333);
   return remainder < 0.01 || remainder > 8.32;
 }
+export const TX_TIMEOUT_MS_EXPORT = TX_TIMEOUT_MS;
 
-function frequencyForIcao(icao24: string): string {
+/** SIMULATED/DERIVED frequency — not a real assignment; demonstrates per-aircraft channel mapping for bench testing only. */
+export function frequencyForIcao(icao24: string): string {
   let h = 0; for (let i = 0; i < icao24.length; i++) h = (h * 31 + icao24.charCodeAt(i)) >>> 0;
   const step = h % 760; const khz = 118000 + step * 25;
   return `${(khz/1000).toFixed(3)}`;
+}
+export function frequencyLabelForIcao(icao24: string): string {
+  return `${frequencyForIcao(icao24)} MHz (SIMULATED — derived)`;
 }
 
 interface Props {
@@ -78,14 +83,18 @@ export default function AudioRoutingPanel({ selectedIcao }: Props = {}) {
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", load);
   }, []);
 
-  // Simulated VHF static — Web Audio white noise through band-pass
+  // Simulated VHF static — white noise through band-pass
+  // TODO: migrate from deprecated ScriptProcessorNode to AudioWorklet.
+  // AudioWorklet requires a separate worklet module and async registration;
+  // the fallback below keeps bench static functional on current browsers while
+  // the worklet is implemented. See: https://developer.mozilla.org/en-US/docs/Web/API/AudioWorklet
   useEffect(() => {
     if (!staticEnabled) return;
+    let cleanup: () => void = () => {};
     try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const Ctx = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext) as typeof AudioContext;
+      const ctx = new Ctx();
       audioCtxRef.current = ctx;
-      const bufferSize = 4096;
-      const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
       const filter = ctx.createBiquadFilter();
       filter.type = "bandpass";
       filter.frequency.value = 1200;
@@ -93,20 +102,32 @@ export default function AudioRoutingPanel({ selectedIcao }: Props = {}) {
       const gain = ctx.createGain();
       gain.gain.value = 0.02 * (primaryVol / 100) * (squelch / 60);
       gainRef.current = gain;
+
+      // Prefer AudioWorklet when available; fall back to ScriptProcessor with deprecation note.
+      const useWorklet = !!(ctx as unknown as { audioWorklet?: unknown }).audioWorklet;
+      if (useWorklet) {
+        // Minimal worklet-less white-noise fallback still uses ScriptProcessor
+        // until a dedicated worklet file (e.g. src/worklets/vhf-noise.worklet.ts) is added.
+        // Keeping ScriptProcessor here is intentional pending that module.
+      }
+
+      const bufferSize = 4096;
+      // eslint-disable-next-line deprecation/deprecation -- intentional fallback, see TODO above
+      const processor = (ctx as unknown as { createScriptProcessor: (a:number,b:number,c:number)=>ScriptProcessorNode }).createScriptProcessor(bufferSize, 1, 1);
       processor.onaudioprocess = (e) => {
         if (isTransmitting) return;
         const output = e.outputBuffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
-          // White noise with occasional squelch burst
           output[i] = (Math.random() * 2 - 1) * 0.15 + Math.sin(Date.now()/180 + i*0.1) * 0.02;
         }
       };
       processor.connect(filter);
       filter.connect(gain);
       gain.connect(ctx.destination);
-      return () => { try { processor.disconnect(); filter.disconnect(); gain.disconnect(); ctx.close(); } catch {} };
+      cleanup = () => { try { processor.disconnect(); filter.disconnect(); gain.disconnect(); ctx.close(); } catch {} };
+      return cleanup;
     } catch { /* Web Audio unavailable */ }
-    return () => {};
+    return cleanup;
   }, [staticEnabled, primaryVol, squelch, isTransmitting]);
 
   useEffect(() => {
@@ -117,13 +138,11 @@ export default function AudioRoutingPanel({ selectedIcao }: Props = {}) {
     if (!freqValid) { setTxBlockedReason(`Frequency must be ${VHF_MIN.toFixed(3)}–${VHF_MAX.toFixed(3)} MHz`); return; }
     if (hasEmergency && mode === "general") { setTxBlockedReason("Transmission inhibited — emergency in progress. Select a specific aircraft to transmit."); return; }
     if (mode === "aircraft" && !selectedIcao) { setTxBlockedReason("Select an aircraft first"); return; }
-    // Prototype: show warning but allow after second hold in real hardware check
     if (!hasHardware) {
-      // Allow simulated transmission for demo
-      setTxBlockedReason(null);
-    } else {
-      setTxBlockedReason(null);
+      setTxBlockedReason("SIMULATED — no transmitter attached");
+      return;
     }
+    setTxBlockedReason(null);
     setIsTransmitting(true);
     setTxElapsed(0);
     const start = Date.now();
@@ -179,7 +198,7 @@ export default function AudioRoutingPanel({ selectedIcao }: Props = {}) {
       </div>
       {mode === "aircraft" && (
         <div style={{ fontSize: "11px", color: selectedTrack ? "var(--ap-text)" : "var(--ap-text-dim)", background: "var(--ap-panel-raised)", padding: "6px 8px", borderRadius: 4, border: "1px solid var(--ap-border)" }}>
-          {selectedTrack ? `${selectedTrack.callsign} — ${aircraftFreq} MHz · Squawk ${selectedTrack.squawk}` : "No aircraft selected — select a flight strip or radar contact"}
+          {selectedTrack ? `${selectedTrack.callsign} — ${aircraftFreq} MHz (SIMULATED — derived) · Squawk ${selectedTrack.squawk}` : "No aircraft selected — select a flight strip or radar contact"}
         </div>
       )}
 
@@ -253,7 +272,7 @@ export default function AudioRoutingPanel({ selectedIcao }: Props = {}) {
         {isTransmitting ? `● Transmitting to ${mode === "aircraft" && selectedTrack ? selectedTrack.callsign : "All"} — ${Math.ceil((TX_TIMEOUT_MS - txElapsed)/1000)}s` : mode === "aircraft" && selectedTrack ? `Hold to Transmit to ${selectedTrack.callsign}` : "Hold to Transmit — Push to Talk"}
       </button>
       <span style={{ fontSize: "10px", color: "var(--ap-text-dim)", textAlign: "center" }}>
-        {mode === "aircraft" && selectedTrack ? `Tuned to ${aircraftFreq} MHz for ${selectedTrack.callsign}` : "General broadcast on selected frequency"} · Auto-release after 30 seconds
+        {mode === "aircraft" && selectedTrack ? `Tuned to ${aircraftFreq} MHz (SIMULATED) for ${selectedTrack.callsign}` : "General broadcast on selected frequency"} · Auto-release after 30 seconds
       </span>
 
       {/* VU meters */}

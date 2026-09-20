@@ -9,15 +9,21 @@ Protocol (one JSON object per line, ``\\n`` terminated):
 Inbound (from the Rust engine):
     {"cmd": "init", "db_path": "..."}
     {"cmd": "log_tracks", "tracks": [...]}
+    {"cmd": "log_alerts", "alerts": [...]}
+    {"cmd": "log_weather", "source": "...", "observed_ms": ..., ...}
     {"cmd": "shutdown"}
 
 Outbound (to the Rust engine):
     {"ev": "ready"}
     {"ev": "awos", "qnh_hpa": ..., ...}
     {"ev": "db_ack", "rows": N}
+    {"ev": "error", "cmd": "...", "message": "..."}
 
 The sidecar must never crash the surveillance stack: every command handler
-is wrapped so failures degrade to an error frame on stderr.
+is wrapped so failures degrade to a structured error event
+``{"ev":"error","cmd":...,"message":...}`` on stdout and a log line on
+stderr. ``init`` and ``log_tracks`` are explicitly wrapped; ``log_alerts``
+and ``log_weather`` follow the same contract.
 """
 
 from __future__ import annotations
@@ -41,6 +47,15 @@ def emit(payload: dict) -> None:
 def log_error(message: str) -> None:
     sys.stderr.write(f"[sidecar] {message}\n")
     sys.stderr.flush()
+
+
+def _opt_float_msg(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def start_awos_thread(interval_s: float = 10.0) -> threading.Event:
@@ -103,18 +118,64 @@ def main() -> None:
                     emit({"ev": "ready"})
 
             elif cmd == "log_tracks":
-                if engine is None:
-                    emit({"ev": "db_ack", "rows": 0})
-                    continue
-                tracks = msg.get("tracks", [])
-                rows = engine.insert_tracks(tracks)
-                emit({"ev": "db_ack", "rows": rows})
+                try:
+                    if engine is None:
+                        emit({"ev": "db_ack", "rows": 0})
+                        continue
+                    tracks = msg.get("tracks", [])
+                    rows = engine.insert_tracks(tracks)
+                    emit({"ev": "db_ack", "rows": rows})
+                except Exception as exc:
+                    log_error(f"log_tracks failed: {exc}")
+                    emit({"ev": "error", "cmd": "log_tracks", "message": str(exc)})
+
+            elif cmd == "log_alerts":
+                try:
+                    if engine is None:
+                        emit({"ev": "db_ack", "rows": 0})
+                        continue
+                    alerts = msg.get("alerts", [])
+                    rows = engine.insert_stca_alerts(alerts)
+                    emit({"ev": "db_ack", "rows": rows})
+                except Exception as exc:
+                    log_error(f"log_alerts failed: {exc}")
+                    emit({"ev": "error", "cmd": "log_alerts", "message": str(exc)})
+
+            elif cmd == "log_weather":
+                try:
+                    if engine is None:
+                        emit({"ev": "db_ack", "rows": 0})
+                        continue
+                    # record_weather signature: source, observed_ms, qnh_hpa, wind..., raw_text
+                    rows = engine.record_weather(
+                        source=str(msg.get("source", "UNKNOWN")),
+                        observed_ms=int(msg.get("observed_ms", int(time.time() * 1000))),
+                        qnh_hpa=_opt_float_msg(msg.get("qnh_hpa")),
+                        wind_dir_deg=_opt_float_msg(msg.get("wind_dir_deg")),
+                        wind_speed_kt=_opt_float_msg(msg.get("wind_speed_kt")),
+                        temperature_c=_opt_float_msg(msg.get("temperature_c")),
+                        dewpoint_c=_opt_float_msg(msg.get("dewpoint_c")),
+                        visibility_m=_opt_float_msg(msg.get("visibility_m")),
+                        raw_text=msg.get("raw_text"),
+                    )
+                    emit({"ev": "db_ack", "rows": rows})
+                except Exception as exc:
+                    log_error(f"log_weather failed: {exc}")
+                    emit({"ev": "error", "cmd": "log_weather", "message": str(exc)})
 
             elif cmd == "shutdown":
-                break
+                try:
+                    break
+                except Exception as exc:
+                    log_error(f"shutdown failed: {exc}")
+                    break
 
             else:
-                log_error(f"unknown cmd: {cmd!r}")
+                try:
+                    log_error(f"unknown cmd: {cmd!r}")
+                    emit({"ev": "error", "cmd": cmd, "message": f"unknown cmd {cmd!r}"})
+                except Exception as exc:
+                    log_error(f"unknown cmd handler failed: {exc}")
     except KeyboardInterrupt:  # pragma: no cover
         pass
     finally:

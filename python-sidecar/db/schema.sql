@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS track_positions (
     vertical_rate_fpm DOUBLE,
     squawk          VARCHAR,
     coasting        BOOLEAN,
-    sigma_m         DOUBLE
+    sigma_m         DOUBLE,
+    mode_s_capable  BOOLEAN,
+    last_baro_altitude_ft DOUBLE
 );
 
 CREATE TABLE IF NOT EXISTS stca_alerts (

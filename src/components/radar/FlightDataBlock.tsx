@@ -23,20 +23,30 @@ export function formatFDB(track: Track): FDBText {
         ? "\u2193"
         : "";
   const source = track.coasting ? "DR" : track.squawk === "----" ? "----" : "1090";
-  const ann = (() => {
+  // Mirrors Rust FlightDataBlock::from_track line3 logic (models.rs:319-343)
+  const line3 = (() => {
     switch (track.alert) {
-      case "emergency": return "EMRG";
-      case "radio_failure": return "RADO";
-      case "hijack": return "HIJK";
-      case "geofence_breach": return "GEO!";
-      case "dark_target": return "DARK";
-      default: return `S-${track.squawk.length.toString().padStart(2, "0")}`;
+      case "emergency":
+        return "EMRG";
+      case "radio_failure":
+        return "RADO";
+      case "hijack":
+        return "HIJK";
+      case "geofence_breach":
+        return "GEO!";
+      case "dark_target":
+        return "DARK";
+      default:
+        if (track.coasting) return "DR";
+        const q =
+          track.position_sigma_m < 30 ? "Q1" : track.position_sigma_m < 80 ? "Q2" : "Q3";
+        return track.mode_s_capable ? `${q} MS` : q;
     }
   })();
 
   return {
     line1: `${track.callsign.padEnd(8)} ${altM}M${arrow}`,
     line2: `${source} ${Math.round(ktToKmh(track.ground_speed_kt))}KM/H ${track.squawk}`,
-    line3: ann,
+    line3,
   };
 }

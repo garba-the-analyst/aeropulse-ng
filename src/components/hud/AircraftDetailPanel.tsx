@@ -7,8 +7,8 @@ interface Props {
   onTransmit: (icao24: string, callsign: string) => void;
 }
 
+/** SIMULATED/DERIVED frequency — deterministic demo channel, not an ATC assignment. */
 function frequencyForIcao(icao24: string): string {
-  // Deterministic VHF channel per aircraft for demo — 118.000–136.975, 25 kHz raster
   let h = 0;
   for (let i = 0; i < icao24.length; i++) h = (h * 31 + icao24.charCodeAt(i)) >>> 0;
   const steps = 760; // (136975-118000)/25
@@ -89,11 +89,11 @@ export default function AircraftDetailPanel({ icao24, onClear, onTransmit }: Pro
 
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={() => onTransmit(track.icao24, track.callsign)} style={{ flex: 1, background: "var(--ap-accent-soft)", borderColor: "var(--ap-accent)", color: "var(--ap-accent)" }}>
-          Transmit to {track.callsign} ({freq} MHz)
+          Transmit to {track.callsign} ({freq} MHz SIMULATED)
         </button>
       </div>
       <div style={{ fontSize: "10px", color: "var(--ap-text-dim)", marginTop: 6, textAlign: "center" }}>
-        Tunes audio panel to {freq} MHz and prepares push-to-talk
+        Tunes audio panel to {freq} MHz (SIMULATED — derived per-aircraft) and prepares push-to-talk
       </div>
     </div>
   );

@@ -358,4 +358,176 @@ mod tests {
         let sa = sample(0, "SOLO", 0.0, 0.0, 250.0, 250.0, 20_000.0);
         assert!(det.detect(&[sa], 0).is_empty());
     }
+
+    #[test]
+    fn stca_matches_bruteforce_ground_truth() {
+        struct Rng(u64);
+        impl Rng {
+            fn next_u64(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                self.0 = x;
+                x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+            }
+            fn unit_pos(&mut self) -> f64 {
+                // uniform [-1, 1]
+                ((self.next_u64() >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+            }
+        }
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+        let mut det = StcaDetector::default();
+        let r_m = HORIZONTAL_MIN_NM * NM_TO_M;
+        let v_ft = VERTICAL_MIN_FT;
+        let look = LOOKAHEAD_S;
+        let dt_brute = 0.05;
+        let steps = (look / dt_brute).ceil() as usize;
+        let mut missed = 0usize;
+        let mut false_alarms = 0usize;
+        // boundary exclusion: ignore cases where minima within 1m/1ft of threshold
+        let hz_eps_m = 1.0;
+        let vt_eps_ft = 1.0;
+        for _ in 0..20000 {
+            let a = TrackSample::from_components(0, "AAA", "AAA", 0.0, 0.0, 30_000.0, 0.0, 0.0, 0.0);
+            let bx = rng.unit_pos() * 60_000.0;
+            let by = rng.unit_pos() * 60_000.0;
+            let bvx = rng.unit_pos() * 250.0;
+            let bvy = rng.unit_pos() * 250.0;
+            let alt_diff = rng.unit_pos() * 2000.0;
+            let vz = rng.unit_pos() * 40.0;
+            let b = TrackSample::from_components(1, "BBB", "BBB", bx, by, 30_000.0 + alt_diff, bvx, bvy, vz);
+            // analytic
+            let analytic_alert = det.detect(&[a.clone(), b.clone()], 0).len() > 0;
+            // brute force sampling at 0.05s
+            let mut brute = false;
+            let mut min_hz = f64::INFINITY;
+            let mut min_vt = f64::INFINITY;
+            for i in 0..=steps {
+                let t = i as f64 * dt_brute;
+                let (ax, ay) = (a.x_m + a.vx_ms * t, a.y_m + a.vy_ms * t);
+                let (bxp, byp) = (b.x_m + b.vx_ms * t, b.y_m + b.vy_ms * t);
+                let hz = ((bxp - ax).powi(2) + (byp - ay).powi(2)).sqrt();
+                let vt = (b.z_ft + b.vz_fps * t - (a.z_ft + a.vz_fps * t)).abs();
+                if hz < min_hz {
+                    min_hz = hz;
+                }
+                if vt < min_vt {
+                    min_vt = vt;
+                }
+                if hz < r_m && vt < v_ft {
+                    brute = true;
+                    break;
+                }
+            }
+            // boundary exclusion
+            let near_boundary = (min_hz - r_m).abs() < hz_eps_m || (min_vt - v_ft).abs() < vt_eps_ft;
+            if near_boundary {
+                continue;
+            }
+            if brute && !analytic_alert {
+                missed += 1;
+            }
+            if !brute && analytic_alert {
+                false_alarms += 1;
+            }
+        }
+        assert_eq!(missed, 0, "analytic missed {} brute true cases", missed);
+        assert_eq!(false_alarms, 0, "analytic false alarms {} where brute false", false_alarms);
+    }
+
+    #[test]
+    fn fast_crossing_pair_that_5s_grid_would_miss() {
+        // Analytic must detect a pair that is only inside cylinder between 5s samples.
+        // We search deterministically for a configuration where 5s-sampled brute misses but analytic hits.
+        let r_m = HORIZONTAL_MIN_NM * NM_TO_M;
+        let v_ft = VERTICAL_MIN_FT;
+        let mut det_analytic = StcaDetector::default();
+        // Try to find a fast perpendicular grazing pass with ~3.5s inside window
+        // Use brute search over offset and timing
+        let mut found_pair: Option<(TrackSample, TrackSample)> = None;
+        // deterministic search using small rng
+        struct Rng(u64);
+        impl Rng {
+            fn next_u64(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                self.0 = x;
+                x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+            }
+            fn unit(&mut self) -> f64 {
+                ((self.next_u64() >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+            }
+        }
+        let mut rng = Rng(0xC0FFEE12345678);
+        for _ in 0..5000 {
+            // A stationary at origin level 30000
+            let a = TrackSample::from_components(0, "AAA", "AAA", 0.0, 0.0, 30_000.0, 0.0, 0.0, 0.0);
+            // B high speed perpendicular: start at (-D, b_offset) moving east
+            // D large enough to start outside at t=0
+            let speed = 250.0 + rng.unit().abs() * 100.0; // 250..350
+            let b_offset = r_m - 5.0 - rng.unit().abs() * 15.0; //  R-20 .. R-5 => short chord 2-4s
+            let start_x = -1500.0 - rng.unit().abs() * 1000.0; // -1500..-2500
+            let b = TrackSample::from_components(
+                1,
+                "BBB",
+                "BBB",
+                start_x,
+                b_offset,
+                30_000.0,
+                speed,
+                0.0,
+                0.0,
+            );
+            // analytic detect
+            let analytic = !det_analytic.detect(&[a.clone(), b.clone()], 0).is_empty();
+            // naive 5s grid: sample at 0,5,10,... up to 120
+            let mut naive = false;
+            let mut t = 0.0;
+            while t <= LOOKAHEAD_S + 1e-9 {
+                let (ax, ay) = (a.x_m + a.vx_ms * t, a.y_m + a.vy_ms * t);
+                let (bx, by) = (b.x_m + b.vx_ms * t, b.y_m + b.vy_ms * t);
+                let hz = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+                let vt = (b.z_ft - a.z_ft).abs();
+                if hz < r_m && vt < v_ft {
+                    naive = true;
+                    break;
+                }
+                t += 5.0;
+            }
+            if analytic && !naive {
+                found_pair = Some((a, b));
+                break;
+            }
+        }
+        // Fallback hardcoded pair if search fails (should not)
+        let (a, b) = found_pair.unwrap_or_else(|| {
+            // Hardcoded grazing pass: chord ~3.4s between samples 0 and 5
+            // b passes tangentially at y = r -10
+            let a = TrackSample::from_components(0, "AAA", "AAA", 0.0, 0.0, 30_000.0, 0.0, 0.0, 0.0);
+            let b = TrackSample::from_components(1, "BBB", "BBB", -1200.0, r_m - 10.0, 30_000.0, 250.0, 0.0, 0.0);
+            (a, b)
+        });
+        // Verify analytic detects
+        let mut det = StcaDetector::default();
+        let alerts = det.detect(&[a.clone(), b.clone()], 0);
+        assert_eq!(alerts.len(), 1, "fast crossing between 5s samples must be detected by analytic");
+        // Verify naive 5s grid indeed misses this pair
+        let mut naive = false;
+        let mut t = 0.0;
+        while t <= LOOKAHEAD_S + 1e-9 {
+            let (ax, ay) = (a.x_m + a.vx_ms * t, a.y_m + a.vy_ms * t);
+            let (bx, by) = (b.x_m + b.vx_ms * t, b.y_m + b.vy_ms * t);
+            let hz = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+            let vt = (b.z_ft - a.z_ft).abs();
+            if hz < r_m && vt < v_ft {
+                naive = true;
+                break;
+            }
+            t += 5.0;
+        }
+        assert!(!naive, "naive 5s grid must miss this fast crossing");
+    }
 }

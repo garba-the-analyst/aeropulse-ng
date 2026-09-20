@@ -8,12 +8,15 @@
 //! Rust → Python:
 //!   {"cmd":"init","db_path":"..."}
 //!   {"cmd":"log_tracks","tracks":[...]}
+//!   {"cmd":"log_alerts","alerts":[...]}
+//!   {"cmd":"log_weather","source":"AWOS","observed_ms":...,"qnh_hpa":...}
 //!   {"cmd":"shutdown"}
 //!
 //! Python → Rust:
 //!   {"ev":"ready"}
 //!   {"ev":"awos","qnh_hpa":1013.2,...}
 //!   {"ev":"db_ack","rows":120}
+//!   {"ev":"error","cmd":"...","message":"..."}
 //!
 //! Degradation contract: if the interpreter or script cannot be spawned,
 //! `spawn` returns `None` and the engine continues on the synthetic AWOS
@@ -27,6 +30,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
 
 use crate::models::AwosObservation;
+use crate::models::STCAAlert;
 use crate::models::Track;
 
 #[derive(Debug, Clone)]
@@ -81,6 +85,71 @@ pub fn encode_init(db_path: &str) -> String {
 /// Encodes a track batch for persistence.
 pub fn encode_log_tracks(tracks: &[Track]) -> String {
     serde_json::to_string(&LogTracksCmd { cmd: "log_tracks", tracks }).expect("serialisable")
+        + "\n"
+}
+
+#[derive(Debug, Serialize)]
+struct LogAlertsCmd<'a> {
+    cmd: &'static str,
+    alerts: &'a [STCAAlert],
+}
+
+#[derive(Debug, Serialize)]
+struct LogWeatherCmd<'a> {
+    cmd: &'static str,
+    source: &'a str,
+    observed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qnh_hpa: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wind_dir_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wind_speed_kt: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature_c: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dewpoint_c: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visibility_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_text: Option<&'a str>,
+}
+
+/// Encodes an STCA alert batch for persistence.
+pub fn encode_log_alerts(alerts: &[STCAAlert]) -> String {
+    serde_json::to_string(&LogAlertsCmd {
+        cmd: "log_alerts",
+        alerts,
+    })
+    .expect("serialisable")
+        + "\n"
+}
+
+/// Encodes a weather observation for persistence.
+pub fn encode_log_weather(
+    source: &str,
+    observed_ms: u64,
+    qnh_hpa: Option<f32>,
+    wind_dir_deg: Option<f32>,
+    wind_speed_kt: Option<f32>,
+    temperature_c: Option<f32>,
+    dewpoint_c: Option<f32>,
+    visibility_m: Option<f32>,
+    raw_text: Option<&str>,
+) -> String {
+    serde_json::to_string(&LogWeatherCmd {
+        cmd: "log_weather",
+        source,
+        observed_ms,
+        qnh_hpa,
+        wind_dir_deg,
+        wind_speed_kt,
+        temperature_c,
+        dewpoint_c,
+        visibility_m,
+        raw_text,
+    })
+    .expect("serialisable")
         + "\n"
 }
 
@@ -295,6 +364,47 @@ mod tests {
             other => panic!("expected failure event, got {:?}", other),
         }
         assert!(parse_line("").is_none());
+    }
+
+    #[test]
+    fn log_alerts_encodes() {
+        let alert = STCAAlert {
+            id: "342157-061104".into(),
+            icao_a: "342157".into(),
+            callsign_a: "VL604".into(),
+            icao_b: "061104".into(),
+            callsign_b: "NAF911".into(),
+            min_horizontal_nm: 2.8,
+            min_vertical_ft: 120.0,
+            time_to_closest_s: 42.0,
+            triggered_ms: 1700000000000_u64,
+        };
+        let line = encode_log_alerts(&[alert]);
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["cmd"], "log_alerts");
+        assert_eq!(v["alerts"][0]["icao_a"], "342157");
+        assert_eq!(v["alerts"][0]["id"], "342157-061104");
+        assert!(line.ends_with('\n'));
+    }
+
+    #[test]
+    fn log_weather_encodes() {
+        let line = encode_log_weather("AWOS", 1700000000000, Some(1013.2), Some(180.0), Some(12.0), Some(33.5), Some(24.0), Some(8000.0), None);
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["cmd"], "log_weather");
+        assert_eq!(v["source"], "AWOS");
+        assert_eq!(v["observed_ms"].as_u64().unwrap(), 1700000000000_u64);
+        assert_eq!(v["qnh_hpa"], 1013.2);
+        assert!(line.ends_with('\n'));
+    }
+
+    #[test]
+    fn log_weather_omits_none_fields() {
+        let line = encode_log_weather("AWOS-SIM", 1700000000000, Some(1013.2), None, None, None, None, None, None);
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["cmd"], "log_weather");
+        assert!(v.get("wind_dir_deg").is_none());
+        assert!(v.get("wind_speed_kt").is_none());
     }
 
     #[tokio::test]

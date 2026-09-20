@@ -602,8 +602,8 @@ pub fn encode_df11_frame(icao24: u32) -> Vec<u8> {
 fn encode_ac13(alt_ft: f64) -> u16 {
     let n = ((alt_ft + 1000.0) / 25.0).round() as u32 & 0x07FF;
     let mut field: u16 = 0;
-    field |= (((n >> 4) & 0x3F) as u16) << 7;
-    field |= (((n >> 3) & 0x01) as u16) << 5;
+    field |= (((n >> 5) & 0x3F) as u16) << 7;
+    field |= (((n >> 4) & 0x01) as u16) << 5;
     field |= 1u16 << 4;
     field |= (n & 0x0F) as u16;
     field
@@ -629,6 +629,7 @@ mod tests {
 
     #[test]
     fn all_emitted_frames_decode_with_matching_icao() {
+        use crate::hardware::mode_s_decoder::{decode_frame_with_cache, IcaoCache};
         let mut sim = Simulator::new(SimulatorConfig::default());
         let mut now = 1_700_000_000_000u64;
         let events = run_seconds(&mut sim, 40.0, 0.25, &mut now);
@@ -642,15 +643,26 @@ mod tests {
             .collect();
         assert!(frames.len() > 400, "expected dense frame flow, got {}", frames.len());
 
+        let mut cache = IcaoCache::new(60_000, 4096);
         let mut decoded = 0usize;
+        let mut now_ms = 1_700_000_000_000u64;
         for f in &frames {
-            if let Some(res) = decode_frame(f) {
+            // Try cache-aware decode for AP frames, fallback to cache-less for DF11/17
+            let res = decode_frame_with_cache(f, &mut cache, now_ms)
+                .or_else(|| decode_frame(f));
+            if let Some(res) = res {
                 decoded += 1;
                 let icao = res.message.icao24();
                 assert_ne!(icao, 0, "zero ICAO impossible");
+                // Confirm self-validating frames to populate cache for next AP frames
+                // (decode_frame_with_cache already does this, but for fallback path we need to)
+                if let Some(cached) = decode_frame(f) {
+                    cache.confirm(cached.message.icao24(), now_ms);
+                }
             } else {
                 panic!("simulator produced undecodable frame: {}", crate::hardware::mode_s_decoder::frame_to_hex(f));
             }
+            now_ms += 250;
         }
         assert_eq!(decoded, frames.len(), "100% decode rate required");
     }

@@ -9,6 +9,14 @@ export default defineConfig({
   // package.json scripts while assets live beside the sources.
   root: __dirname,
   plugins: [react()],
+  // vitest config — cast to any to avoid vite/vitest type duel (vite 8 vs vitest 3)
+  ...( {
+    test: {
+      environment: "jsdom",
+      globals: true,
+      include: ["**/*.{test,spec}.{ts,tsx}"],
+    },
+  } as any),
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },

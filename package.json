@@ -9,6 +9,8 @@
     "build": "tsc --noEmit -p src && vite build -c src/vite.config.ts",
     "preview": "vite preview -c src/vite.config.ts",
     "typecheck": "tsc --noEmit -p src",
+    "test": "vitest run --config src/vite.config.ts",
+    "test:watch": "vitest --config src/vite.config.ts",
     "docs:office": "python3 scripts/build_office.py",
     "docs:buysheets": "python3 scripts/build_buy_sheets.py",
     "tauri": "tauri",
@@ -23,11 +25,15 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^26.3.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^26.1.0",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "^3.2.7"
   }
 }

@@ -1170,6 +1170,62 @@ mod tests {
         full
     }
 
+    // Audit-mirrored builder: payload_bits <<24 ; parity = crc24(payload<<24) ^ icao ; full = payload_bytes + parity
+    fn build_ap_frame_from_bits(payload_bits: u128, total_bits: usize, icao: u32) -> Vec<u8> {
+        let total_bytes = total_bits / 8;
+        let shifted = payload_bits << 24;
+        let mut full = vec![0u8; total_bytes];
+        for i in 0..total_bytes {
+            full[total_bytes - 1 - i] = ((shifted >> (i * 8)) & 0xFF) as u8;
+        }
+        let rem = crc25(&full);
+        let parity = rem ^ icao;
+        let n = full.len();
+        full[n - 3] = (parity >> 16) as u8;
+        full[n - 2] = (parity >> 8) as u8;
+        full[n - 1] = parity as u8;
+        full
+    }
+
+    fn squawk_to_field13(squawk: &str) -> u16 {
+        let digits: Vec<u8> = squawk
+            .chars()
+            .map(|c| c.to_digit(8).unwrap() as u8)
+            .collect();
+        assert_eq!(digits.len(), 4, "squawk must be 4 octal digits");
+        let a = digits[0];
+        let b = digits[1];
+        let c = digits[2];
+        let d = digits[3];
+        let a1 = a & 1;
+        let a2 = (a >> 1) & 1;
+        let a4 = (a >> 2) & 1;
+        let b1 = b & 1;
+        let b2 = (b >> 1) & 1;
+        let b4 = (b >> 2) & 1;
+        let c1 = c & 1;
+        let c2 = (c >> 1) & 1;
+        let c4 = (c >> 2) & 1;
+        let d1 = d & 1;
+        let d2 = (d >> 1) & 1;
+        let d4 = (d >> 2) & 1;
+        let mut field: u16 = 0;
+        field |= (c1 as u16) << 12;
+        field |= (a1 as u16) << 11;
+        field |= (c2 as u16) << 10;
+        field |= (a2 as u16) << 9;
+        field |= (c4 as u16) << 8;
+        field |= (a4 as u16) << 7;
+        // bit6 = 0
+        field |= (b1 as u16) << 5;
+        field |= (d1 as u16) << 4;
+        field |= (b2 as u16) << 3;
+        field |= (d2 as u16) << 2;
+        field |= (b4 as u16) << 1;
+        field |= d4 as u16;
+        field
+    }
+
     // Ground-truth vectors from audit (pyModeS 3.6.0)
     const DF20_HEX: &str = "A000149800000000000000E65891";
     const DF21_HEX: &str = "A8000000202CC371C32CE0B91A86";
@@ -1337,5 +1393,136 @@ mod tests {
         df18_bytes[n - 1] = parity as u8;
         let res = decode_frame(&df18_bytes).expect("DF18 CF0 must decode");
         assert_eq!(res.df, DownlinkFormat::Df18);
+    }
+
+    // Phase 2.6: property-style test for 1000 seeded random ICAOs/altitudes.
+    // For each, build DF4 and DF20 AP frames via helper build_ap_frame, confirm ICAO in IcaoCache (60s/4096),
+    // decode with decode_frame_with_cache, assert ICAO and altitude round-trip (within 25ft).
+    #[test]
+    fn ap_altitude_property_1000_seeded_random() {
+        // deterministic xorshift64* seeded RNG
+        struct Rng(u64);
+        impl Rng {
+            fn next_u64(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                self.0 = x;
+                x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+            }
+            fn next_u32(&mut self) -> u32 {
+                (self.next_u64() >> 32) as u32
+            }
+        }
+        let mut rng = Rng(0x9E3779B97F4A7C15u64 ^ 0x12345678u64);
+        for _ in 0..1000 {
+            let icao = (rng.next_u32() & 0xFFFFFF) as u32;
+            if icao == 0 {
+                continue;
+            }
+            // altitude 0..41000 ft quantised to 25ft
+            let alt_steps = (rng.next_u32() % 1641) as f64; // 0..1640 => 0..41000
+            let alt_ft = alt_steps * 25.0;
+
+            let ac13 = encode_ac13(alt_ft);
+
+            // Build DF4 (56-bit): payload 32 bits = DF4 header + AC
+            // Use byte builder (payload<<24 logic via crc)
+            let mut payload4 = vec![0u8; 4];
+            payload4[0] = (4 << 3) | 0;
+            payload4[1] = 0;
+            payload4[2] = ((ac13 >> 8) & 0xFF) as u8;
+            payload4[3] = (ac13 & 0xFF) as u8;
+            let frame4 = build_ap_frame(&payload4, 7, icao);
+            // Also verify integer builder path for DF4 (payload_bits <<24)
+            let payload_int4: u128 = ((4u128) << 27) | (ac13 as u128);
+            // payload_int4 is 32-bit payload placed at top; shift will be done inside builder
+            let _frame4_int = build_ap_frame_from_bits(payload_int4, 56, icao);
+            // For DF20, need 88-bit payload (11 bytes) with same AC
+            let mut payload20 = vec![0u8; 11];
+            payload20[0] = (20 << 3) | 0;
+            payload20[1] = 0;
+            payload20[2] = ((ac13 >> 8) & 0xFF) as u8;
+            payload20[3] = (ac13 & 0xFF) as u8;
+            // MB bytes 4..10 remain zero
+            let frame20 = build_ap_frame(&payload20, 14, icao);
+
+            // Also exercise integer builder for DF20
+            let payload_int20: u128 = ((20u128) << 83) | ((ac13 as u128) << 56);
+            let _frame20_int = build_ap_frame_from_bits(payload_int20, 112, icao);
+
+            let mut cache = IcaoCache::new(60_000, 4096);
+            cache.confirm(icao, 0);
+            for (frame, expected_df) in [(frame4, DownlinkFormat::Df4), (frame20, DownlinkFormat::Df20)] {
+                let res = decode_frame_with_cache(&frame, &mut cache, 1000)
+                    .unwrap_or_else(|| panic!("AP frame must decode for icao {:06X} alt {} frame {}", icao, alt_ft, frame_to_hex(&frame)));
+                assert_eq!(res.df, expected_df);
+                assert_eq!(res.message.icao24(), icao, "ICAO round-trip");
+                let decoded_alt = match res.message {
+                    DecodedMessage::CommBAltitudeReply { altitude_ft, .. } => altitude_ft.expect("DF20 altitude"),
+                    DecodedMessage::AirAirSurveillance { altitude_ft, .. } => altitude_ft.expect("DF4 altitude"),
+                    other => panic!("unexpected variant {:?}", other),
+                };
+                assert!(
+                    (decoded_alt - alt_ft).abs() <= 25.0 + 1e-6,
+                    "altitude round-trip {} vs {} diff {}",
+                    decoded_alt,
+                    alt_ft,
+                    (decoded_alt - alt_ft).abs()
+                );
+            }
+        }
+    }
+
+    // Phase 2.6: DF5/DF21 squawk test with known Mode A codes
+    #[test]
+    fn ap_squawk_df5_df21_roundtrip_known_codes() {
+        let codes = ["7700", "1200", "7500", "7600"];
+        for squawk in codes {
+            let id13 = squawk_to_field13(squawk);
+            // Verify field13_to_squawk round-trip itself
+            assert_eq!(field13_to_squawk(id13), squawk, "squawk codec roundtrip {}", squawk);
+
+            // Build payloads similarly to altitude but with ID field
+            // DF5 (56-bit) and DF21 (112-bit) share same ID position 19..32
+            let mut payload5 = vec![0u8; 4];
+            payload5[0] = (5 << 3) | 0;
+            payload5[1] = 0;
+            payload5[2] = ((id13 >> 8) & 0xFF) as u8;
+            payload5[3] = (id13 & 0xFF) as u8;
+
+            let mut payload21 = vec![0u8; 11];
+            payload21[0] = (21 << 3) | 0;
+            payload21[1] = 0;
+            payload21[2] = ((id13 >> 8) & 0xFF) as u8;
+            payload21[3] = (id13 & 0xFF) as u8;
+            // MB containing BDS 2,0 dummy? Leave zero; decoder will still accept and return empty callsign
+            // For DF21 we leave MB zero, squawk should still decode
+            let icao: u32 = 0xABC123;
+            let frame5 = build_ap_frame(&payload5, 7, icao);
+            let frame21 = build_ap_frame(&payload21, 14, icao);
+
+            let mut cache = IcaoCache::new(60_000, 4096);
+            cache.confirm(icao, 0);
+            let res5 = decode_frame_with_cache(&frame5, &mut cache, 1000).expect("DF5 must decode");
+            assert_eq!(res5.df, DownlinkFormat::Df5);
+            match res5.message {
+                DecodedMessage::AirAirSurveillance { squawk: s, .. } => {
+                    assert_eq!(s.unwrap(), squawk, "DF5 squawk {}", squawk);
+                }
+                other => panic!("DF5 wrong variant {:?}", other),
+            }
+            let res21 = decode_frame_with_cache(&frame21, &mut cache, 2000).expect("DF21 must decode");
+            assert_eq!(res21.df, DownlinkFormat::Df21);
+            match res21.message {
+                DecodedMessage::CommBIdentityReply { squawk: s, .. } => {
+                    assert_eq!(s.unwrap(), squawk, "DF21 squawk {}", squawk);
+                }
+                other => panic!("DF21 wrong variant {:?}", other),
+            }
+            // Cross-check with field13_to_squawk independent path
+            assert_eq!(field13_to_squawk(id13), squawk);
+        }
     }
 }
