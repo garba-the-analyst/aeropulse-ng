@@ -14,9 +14,9 @@ walks through every screen, control and operational scenario. For design depth s
 | Component | Minimum | Notes |
 |---|---|---|
 | OS | Ubuntu 22.04/24.04 (X11) | Windows/macOS build via Tauri toolchain untested here |
-| CPU / RAM | 4 cores · 8 GB | 60 fps canvas + EKF comfortably inside budget |
+| CPU / RAM | 4 cores · 8 GB | 60 fps canvas + Kalman filter (CV) comfortably inside budget |
 | GPU | any OpenGL 2 class | Canvas2D renderer; no discrete GPU required |
-| Rust | ≥ 1.77 | `rustup` default stable is fine |
+| Rust | ≥ 1.78 | `rustup` stable via `rust-toolchain.toml`; Cargo.lock v4 committed |
 | Node.js | ≥ 20 | ships Vite 8 + TypeScript 7 |
 | Python | 3.10+ with `duckdb pyserial pytest` | sidecar venv (setup below) |
 
@@ -84,7 +84,7 @@ starts ≈15 s).
 Both windows share the **Master Command Bar** (Screen 0):
 
 * **Left** — product identity.
-* **Centre** — channel health chips (`SDR-1/2/3`, `AWOS`, `EKF ENGINE`). Green dot =
+* **Centre** — channel health chips (`SDR-1/2/3`, `AWOS`, `KF ENGINE`). Green dot = (KF = Kalman filter, constant-velocity; module `ekf.rs` historic)
   nominal, flashing red = fault/simulated-absent.
 * **Right** — range-scale selector (**km**, SI policy), ZULU + WAT clocks,
   `EMERG 7700` override button (arms every track emergency-red for 30 s).
@@ -109,7 +109,7 @@ Both windows share the **Master Command Bar** (Screen 0):
 | Flight Data Strip Bay | Arrivals/departures sorted by callsign; edge colour green standard · amber priority/approach (< 1 100 m) · red emergency |
 | Triple-Fusion Weather | AWOS surface block (QNH hPa, wind °/km·h⁻¹, temp/dew), visibility km, Harmattan dust-layer top (m), upper-air table from fused nodes with provenance column, raw D-ATIS/METAR feed |
 | Threat Matrix | Live anomalies: squawk emergencies, dark targets, silence events, breaches |
-| Diagnostics | Per-channel message rates, FFT plot around 1090 MHz / 131.55 MHz, EKF latency gauge against the 2 ms ceiling, DuckDB write rate |
+| Diagnostics | Per-channel message rates, FFT plot around 1090 MHz / 131.55 MHz (simulated: message-rate synthesis until RF tap), Kalman filter latency gauge against the 2 ms ceiling, DuckDB write rate |
 
 ---
 
@@ -117,7 +117,7 @@ Both windows share the **Master Command Bar** (Screen 0):
 
 With the simulator engaged, a standard session unfolds as:
 
-1. **Boot** — six tracks appear already filtered (EKF converges in ~12 fixes);
+1. **Boot** — six tracks appear already filtered (Kalman filter converges in ~12 fixes);
    weather fills within the first ACARS/AWOS cadence (~30–45 s).
 2. **T+45 s** — VL604 squawks 7700: symbol turns red, FDB shows `EMRG`,
    strip edge goes red, threat matrix logs `GENERAL EMERGENCY`.
@@ -198,35 +198,36 @@ LOS_NM = 1.06 × (√h_r + √h_t)   [nautical miles]
 
 | Antenna height | Target 500 ft | Target 1 000 ft | Target 2 000 ft |
 |----------------|---------------|-----------------|-----------------|
-| 30 ft (mast)   | 25 NM         | 34 NM           | 48 NM           |
-| 100 ft (tower) | 30 NM         | 39 NM           | 53 NM           |
-| 300 ft (hill)  | 38 NM         | 47 NM           | 61 NM           |
+| 30 ft (mast, ≈9 m) | 30 NM    | 39 NM           | 53 NM           |
+| 100 ft (tower, ≈30 m) | 34 NM | 44 NM           | 58 NM           |
+| 300 ft (hill, ≈91 m) | 42 NM | 52 NM           | 66 NM           |
 
-Terrain, buildings and vegetation reduce these ranges by 15–30 % in practice.
+Terrain, buildings and vegetation reduce these ranges by 15–30 % in practice. Values are LOS_NM = 1.06 × (√h_r + √h_t) — computed theoretical bound for smooth Earth, not field-measured.
 
 ### 8.2 What This Means for the Demo
 
-The competition demo runs a single RTL-SDR at DNKN (Mallam Aminu Kano Intl, antenna ~30 m AGL, flat terrain). Its declared envelope:
+The competition demo runs a single RTL-SDR at DNKN (Mallam Aminu Kano Intl, antenna ~30 m AGL ≈100 ft, flat terrain). Its declared envelope (computed theoretical bound, smooth-Earth):
 
-- **34 NM @ 1 000 ft AGL** (flat terrain, no clutter)
-- **25 NM @ 500 ft AGL**
+- **44 NM @ 1 000 ft AGL** (flat terrain, no clutter)
+- **34 NM @ 500 ft AGL**
 - Terrain penalty: –15 % urban, –30 % hilly
 
-**This is a measured physics bound, not a marketing figure.** No software processing can extend the radio horizon; only additional receiver sites (MLAT) or passive-RF illumination can close low-altitude gaps.
+**This is a computed theoretical bound, not a field-measured figure.** No software processing can extend the radio horizon; only additional receiver sites (MLAT) or passive-RF illumination can close low-altitude gaps.
 
 ### 8.3 Extended Mode S — What We Track Beyond ADS-B Out
 
-The decoder listens on 1090 MHz for all Mode S downlinks, not just ADS-B Extended Squitter (DF17/18). This means:
+The decoder (`src-tauri/src/hardware/mode_s_decoder.rs`) listens on 1090 MHz for all Mode S downlinks, not just ADS-B Extended Squitter (DF17/18). Status per Downlink Format:
 
-| Signal | What It Gives | Who Broadcasts It |
-|--------|---------------|-------------------|
-| **DF17/18 ADS-B** | Position, velocity, callsign, status | Commercial + participating military |
-| **DF11 All-call reply** | ICAO address + capability | Any Mode S transponder replying to ATC radar |
-| **DF20 Comm-B Altitude** | Elicited baro altitude | Mode S targets interrogated by ATC |
-| **DF21 Comm-B Identity** | Elicited callsign | Mode S targets interrogated by ATC |
-| **DF0/4/5/16 ACAS/TCAS** | Reply info + optional altitude | TCAS-equipped aircraft (military, GA, helicopters) |
+| DF | Layout | Status | Notes |
+|----|--------|--------|-------|
+| **17** | 112-bit ES | Implemented+tested | Position/velocity/identity — primary surveillance |
+| **18** | 112-bit ES relay | Implemented+tested | TIS-B/ADS-R payload, same decoder as DF17 |
+| **11** | 56-bit All-call | Implemented+tested | ICAO + capability; proves Mode S equipage |
+| **20** | 112-bit Comm-B | Implemented | Elicited altitude; altitude consistency check vs ADS-B |
+| **21** | 112-bit Comm-B | Implemented | Elicited callsign/identity |
+| **0/4/5/16** | 56/112-bit air-air & surveillance | Implemented | RI + optional altitude; indicates ACAS/TCAS equipage (not a military classifier) |
 
-**What this means:** AeroPulse-NG sees **any aircraft with a Mode S transponder that replies to an ATC interrogator**, even if it does not broadcast ADS-B Out (DF17). Many military transports, helicopters and GA aircraft fall in this category.
+**What this means:** AeroPulse-NG sees **any Mode S transponder that replies to an ATC interrogator**, even if it does not broadcast ADS-B Out (DF17). Many military transports, helicopters and GA aircraft fall in this category, but ACAS equipage alone is not used to label an aircraft military.
 
 **What we do NOT see:** Aircraft with **no transponder at all** (no Mode S, no Mode A/C). Detecting those requires primary radar or passive-RF illumination (FM/TV/cellular reflections) — this is a research roadmap item, not a current capability.
 

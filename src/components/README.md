@@ -30,7 +30,7 @@ Window roots: `src/App.tsx` (radar) · `src/HudApp.tsx` (HUD), mounted by
 
 ## MasterCommandBar
 
-Product id · channel health chips (`SDR-1/2/3`, AWOS, EKF) · range-scale
+Product id · channel health chips (`SDR-1/2/3`, AWOS, KF) · range-scale — KF = Kalman filter (constant-velocity, linear; module `ekf.rs` historic)
 selector (**km**, options from `RANGE_OPTIONS_KM`) · ZULU + WAT clocks
 (WAT = UTC+1 fixed) · `EMERG 7700` override → `invokeSafe('trigger_emergency_override')`
 with a 30 s local armed state.
@@ -72,7 +72,7 @@ on the next frames.
   wind °, speed km/h, °C, provenance bitmask decode) + raw D-ATIS/METAR feed.
 * **SystemMetrics** — per-channel message rates; spectrum plot synthesised from
   live message-rate amplitude around the two centre spikes (documented stand-in
-  for the RF tap); gauges: EKF latency vs 2 ms budget (warn/crit bands), DuckDB
+  for the RF tap); gauges: Kalman filter (CV) latency vs 2 ms budget (warn/crit bands), DuckDB
   writes/s, track/STCA counts.
 
 ## Defense Panels

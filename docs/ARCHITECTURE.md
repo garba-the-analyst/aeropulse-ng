@@ -18,9 +18,9 @@ the connective tissue.
    machine driven by explicit `now_ms` stamps: replays are bit-reproducible and
    every subsystem is unit-testable without tokio. The Tauri runtime owns clocks
    and I/O.
-4. **Presentation converts once.** Engine internals stay native (EKF metres/m·s⁻¹;
+4. **Presentation converts once.** Engine internals stay native (Kalman filter constant-velocity metres/m·s⁻¹;
    DO-260B wire values in ft/kt). SI-metric formatting happens exclusively in
-   `src/lib/units.ts` + the headless formatter, per the NCAA/Annex-5 policy.
+   `src/lib/units.ts` + the headless formatter, per the NCAA/Annex-5 policy. The filter is linear; `ekf.rs` is a historic module name.
 
 ## 2. Data Flow
 
@@ -30,7 +30,7 @@ IngestEvent{Raw1090Frame|AcarsBytes|SquawkReport|SurfaceObservation|UpperAirSamp
         ▼
 ┌─ tick(now_ms) ────────────────────────────────────────────────────────┐
 │ 1 predict(dt) for every TrackState          ← dead-reckoning happens │
-│ 2 drain queue → decode_frame → CPR pair → EKF fuse_*             here │
+│ 2 drain queue → decode_frame → CPR pair → Kalman (CV) fuse_*  here │
 │ 3 periodic scans (sub-sampled from 60 Hz):                           │
 │     STCA @15 Hz · anomaly @1 Hz · geofence @2 Hz                     │
 │ 4 materialise Track[] (+FDB text, leader lines, alert composition)    │
@@ -94,8 +94,8 @@ Every mathematical claim in this repository is executable:
 * CRC implementations validated against externally published frames.
 * CPR solver proven by synthesis round-trips across zone boundaries **and**
   against moving-target pairs (the case static fixtures miss).
-* EKF convergence asserted under seeded noise; gating behaviour asserted both
-  directions (accepts truth, rejects gross outliers).
+* Kalman filter (constant-velocity, linear) convergence asserted under seeded noise; gating behaviour asserted both
+   directions (accepts truth, rejects gross outliers).
 * Engine integration runs 110 simulated seconds end-to-end asserting identity
   resolution, STCA engagement timing, weather arrival and coasting semantics.
 
@@ -112,11 +112,11 @@ LOS_NM = 1.06 × (√h_r + √h_t)
 
 | Antenna height | Target 500 ft | Target 1 000 ft | Target 2 000 ft |
 |----------------|---------------|-----------------|-----------------|
-| 30 ft (mast)   | 25 NM         | 34 NM           | 48 NM           |
-| 100 ft (tower) | 30 NM         | 39 NM           | 53 NM           |
-| 300 ft (hill)  | 38 NM         | 47 NM           | 61 NM           |
+| 30 ft (mast, ≈9 m) | 30 NM    | 39 NM           | 53 NM           |
+| 100 ft (tower, ≈30 m) | 34 NM | 44 NM           | 58 NM           |
+| 300 ft (hill, ≈91 m) | 42 NM | 52 NM           | 66 NM           |
 
-Terrain and clutter reduce these radii by 15–30 % in built-up / hilly areas. The demo site at DNKN (antenna ~30 m AGL, flat terrain) achieves ~34 NM at 1 000 ft AGL.
+Terrain and clutter reduce these radii by 15–30 % in built-up / hilly areas. The demo site at DNKN (antenna ~30 m AGL ≈100 ft, flat terrain) achieves ~44 NM at 1 000 ft AGL (computed theoretical bound for smooth Earth). Values are LOS_NM = 1.06 × (√h_r + √h_t) — not field-measured.
 
 ### 7.2 Station Spacing for Continuous Coverage
 Continuous coverage down to 1 000 ft AGL requires a ground station every **40–80 NM** (≈ 40 NM average radius per station). For a Nigeria-scale deployment this implies ~25 stations. Any claim of "software compensating for sparse coverage" is physically unsupported; the only engineering mitigations are:
@@ -124,43 +124,50 @@ Continuous coverage down to 1 000 ft AGL requires a ground station every **40–
 - **Passive radar**: exploit FM/TV/cellular illuminators for non-cooperative targets (see §8).
 
 ### 7.3 Demo Coverage Statement
-The competition demo runs a single RTL-SDR at DNKN (12.0486° N, 8.5222° E, antenna ~30 m AGL). Its declared envelope:
-- 34 NM @ 1 000 ft AGL (flat terrain, no clutter)
-- 25 NM @ 500 ft AGL
+The competition demo runs a single RTL-SDR at DNKN (12.0486° N, 8.5222° E, antenna ~30 m AGL ≈100 ft). Its declared envelope (computed theoretical bound, smooth-Earth, 1.06 factor):
+- 44 NM @ 1 000 ft AGL (flat terrain, no clutter)
+- 34 NM @ 500 ft AGL
 - Terrain penalty: –15 % urban, –30 % hilly
 
-This is a **measured physics bound**, not a marketing figure.
+This is a **computed theoretical bound**, not a field-measured figure and not a marketing claim; real-world clutter and multipath will reduce it.
 
 ---
 
 ## 8. Extended Mode S Decoding (Air-Gapped, Zero External Keys)
 
-The decoder (`src/hardware/mode_s_decoder.rs`) now supports:
+The decoder (`src-tauri/src/hardware/mode_s_decoder.rs`) supports:
 
-| DF | Format | Payload | Use in AeroPulse-NG |
-|----|--------|---------|---------------------|
-| **17 / 18** | ADS-B Extended Squitter | Position, velocity, identity, status | Primary surveillance source |
-| **11** | All-call reply | ICAO + capability | Proves Mode S capability (military/GA without ADS-B Out) |
-| **20** | Comm-B Altitude Reply | Elicited barometric altitude | Fuses with ADS-B altitude for consistency check |
-| **21** | Comm-B Identity Reply | Elicited callsign | Confirms identity for non-ADS-B Mode S targets |
-| **0 / 4 / 5 / 16** | Short/Long air-air (ACAS/TCAS) | RI + optional altitude | Marks track as ACAS-equipped (likely military/GA) |
-| **18** | Ground relay of extended squitter | Relayed ADS-B payload | Handled transparently, same processing as DF17 |
+| DF | Layout | Status | Notes |
+|----|--------|--------|-------|
+| **17** | 112-bit Extended Squitter | Implemented+tested | Position (CPR), velocity (TC19), identity, status — primary surveillance source; CRC-24 + single-bit repair, Gillham/Q-bit altitude |
+| **18** | 112-bit ES (TIS-B/ADS-R) | Implemented+tested | Relayed ADS-B payload; same processing as DF17, CF field reserved |
+| **11** | 56-bit All-call reply | Implemented+tested | ICAO + capability; confirms Mode S transponder presence; seeds IcaoCache for AP validation |
+| **20** | 112-bit Comm-B Altitude Reply | Implemented | Elicited barometric altitude via BDS; altitude consistency check vs ADS-B (Δ threshold TBD); BDS parser pending scheduling |
+| **21** | 112-bit Comm-B Identity Reply | Implemented | Elicited callsign via BDS; confirms identity for non-ADS-B Mode S targets; BDS parser pending scheduling |
+| **0 / 4 / 5 / 16** | 56/112-bit air-air & surveillance | Implemented | RI + optional altitude; indicates ACAS/TCAS equipage (not a military classifier) — any civil/military TCAS aircraft may reply |
+| *(DF20/21 BDS 4,4/4,5)* | Comm-B registers | Roadmap | BDS 4,4 wind & BDS 4,5 temp codecs exist and are round-trip tested; live DF20/21 interrogation scheduling not yet wired |
 
-**Air-gap guarantee:** All decoding runs locally on 1090 MHz I/Q; no network keys, no external databases, no cryptographic material. Non-cooperative detection (DF0/4/5/16/20/21) is purely passive reception of elicited replies — the aircraft replies to an ATC interrogator; we merely listen.
+**Altitude consistency check:** When both DF17/18 ADS-B altitude and DF20 Comm-B altitude are available for the same ICAO within the fusion window, the engine compares them; a persistent divergence flags a track anomaly (threshold configurable). DF20 alone is not a primary altitude source.
 
-**Non-cooperative roadmap:** To detect targets with **no transponder at all**, the architecture supports a parallel **passive-RF SDR chain** (GNU Radio `gr-pcl` cross-correlation against FM/TV/cellular illuminators) producing `Track` structs that fuse into the existing EKF/STCA. This is a post-NDAIE research item; the decoder interfaces are already shaped for it.
+**Air-gap guarantee:** All decoding runs locally on 1090 MHz I/Q; no network keys, no external databases, no cryptographic material. Non-cooperative detection (DF0/4/5/16/20/21) is purely passive reception of elicited replies — the aircraft replies to an ATC interrogator; we merely listen. ACAS/TCAS equipage is not used as a proxy for military classification.
+
+**Non-cooperative roadmap:** To detect targets with **no transponder at all**, the architecture supports a parallel **passive-RF SDR chain** (GNU Radio `gr-pcl` cross-correlation against FM/TV/cellular illuminators) producing `Track` structs that fuse into the existing Kalman filter / STCA. This is a post-NDAIE research item; the decoder interfaces are already shaped for it.
 
 ---
 
-## 9. Roadmap
+## 9. Roadmap — Honest Prototype Gap List
 
-| # | Item | Notes |
-|---|---|---|
-| 1 | RTL-SDR I/Q front-end | libusb transfers → DC/PPM correction → Manchester sync → `decode_frame()`; registry & decoder interfaces already shaped for it |
-| 2 | Live FFT tap | replace synthesised spectrum with magnitudes from (1); plot component accepts any `[f32]` bins |
-| 3 | Physical AWOS bring-up | sentence parser + checksum ready; needs field characterisation |
-| 4 | DF20/21 Comm-B uplink scheduling | BDS codecs complete; interrogator cadence TBD |
-| 5 | Alert/weather persistence | tables exist; writers pending |
-| 6 | Zero-copy IPC | §3 migration path |
-| 7 | Multi-site handover, RBAC views, offline vector tiles | operational-scale features |
-| 8 | Passive-RF SDR chain (FM/TV/5G) | GNU Radio `gr-pcl` bistatic cross-correlation → Track fusion; decoder interfaces ready |
+Prototype displays and safety math are implemented and tested; the items below are **not yet implemented** and are roadmap-only. Audio and spectrum panels are simulated prototypes until hardware arrives.
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 1 | RTL-SDR I/Q front-end | Roadmap | libusb transfers → DC/PPM correction → Manchester sync → `decode_frame()`; registry & decoder interfaces already shaped for it |
+| 2 | Live FFT tap | Stub (simulated) | Spectrum plot synthesised from message-rate telemetry; replace with magnitudes from (1); plot component accepts any `[f32]` bins |
+| 3 | Physical AWOS bring-up | Roadmap | Sentence parser + checksum ready; needs field cable and port characterisation |
+| 4 | DF20/21 Comm-B uplink scheduling | Roadmap | BDS codecs (BDS 4,4/4,5) complete & round-trip tested; interrogator cadence TBD |
+| 5 | Alert/weather persistence | Partial | DuckDB schema exists; `track_positions` writer wired and tested; `stca_alerts`/`weather_observations` writers wired via NDJSON but field-validation pending (roadmap) |
+| 6 | Audio panel | Stub (simulated only) | VHF frequency is derived per-aircraft (deterministic hash), static is synthetic white noise, PTT is UI-only with safety interlocks (no real TX); see `src/components/comms/AudioRoutingPanel.tsx` |
+| 7 | Zero-copy IPC | Roadmap | §3 migration path; current JSON IPC (~40 KB/frame) sufficient for demo scale |
+| 8 | Multi-site handover, RBAC views, offline vector tiles | Roadmap | Operational-scale features; vector PPI today, no map tiles |
+| 9 | Passive-RF SDR chain (FM/TV/5G) | Roadmap | GNU Radio `gr-pcl` bistatic cross-correlation → Track fusion; decoder interfaces ready |
+| 10 | Military classification | Heuristic only | Callsign prefix `NAF`/`NGA`/`MIL` heuristic for display (see `engine.rs: infer_class`); not authoritative, not derived from ACAS or ICAO registry |

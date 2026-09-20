@@ -4,7 +4,7 @@
 //! one deterministic pass:
 //!
 //! ```text
-//! IngestEvent ──► decode ──► CPR solve ──► EKF update ─┐
+//! IngestEvent ──► decode ──► CPR solve ──► Kalman (CV) update ─┐
 //! ACARS bytes ──► classify ──► weather fusion ─────────┤
 //! AWOS / upper-air ────────────────────────────────────┤
 //!                                                      ▼
@@ -515,18 +515,18 @@ DecodedMessage::GroundRelay { message, .. } => {
                     });
                 }
             }
-            // Altitude consistency check: EKF vs Comm-B/DF4/20 baro
+            // Altitude consistency check: Kalman (CV) vs Comm-B/DF4/20 baro
             const ALT_MISMATCH_THRESHOLD_FT: f64 = 300.0;
             for (icao, ts) in self.tracks.iter() {
                 if let Some(baro) = ts.last_baro_altitude_ft {
                     if ts.ekf.is_initialised() {
-                        let ekf_alt_ft = ts.ekf.state()[2] / 0.3048;
-                        if (ekf_alt_ft - baro).abs() > ALT_MISMATCH_THRESHOLD_FT {
+                        let kf_alt_ft = ts.ekf.state()[2] / 0.3048;
+                        if (kf_alt_ft - baro).abs() > ALT_MISMATCH_THRESHOLD_FT {
                             anomaly_notes.push(AnomalyNote {
                                 icao24: icao.clone(),
                                 reason: format!(
-                                    "ALT_MISMATCH EKF:{:.0}ft vs BARO:{:.0}ft",
-                                    ekf_alt_ft, baro
+                                    "ALT_MISMATCH KF:{:.0}ft vs BARO:{:.0}ft",
+                                    kf_alt_ft, baro
                                 ),
                             });
                         }
@@ -705,6 +705,16 @@ DecodedMessage::GroundRelay { message, .. } => {
     }
 }
 
+/// Military classification heuristic — callsign prefix only, not authoritative.
+///
+/// `NAF` (Nigerian Air Force), `NGA` (Nigerian Army Aviation — used in
+/// simulator fixtures), and `MIL` prefix are treated as military for display
+/// symbology (MIL-STD-2525D caret) and filter grouping. This is a display
+/// heuristic, not an authoritative identity source: it does not inspect Mode S
+/// capability, ICAO allocation, or ACAS equipage, and will misclassify any
+/// civil flight that happens to use those prefixes. The authoritative path
+/// would be an ICAO or national registry lookup, which is not implemented
+/// in the air-gapped prototype.
 fn infer_class(callsign: &str) -> TrackClass {
     let upper = callsign.to_uppercase();
     if upper.starts_with("NAF") || upper.starts_with("NGA") || upper.starts_with("MIL") {

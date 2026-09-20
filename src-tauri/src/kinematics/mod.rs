@@ -1,5 +1,5 @@
-//! Kinematics engine: 6-state EKF smoothing, dead-reckoning projection and
-//! R*-tree accelerated conflict detection.
+//! Kinematics engine: 6-state Kalman filter (constant-velocity, linear) smoothing, dead-reckoning projection and
+//! R*-tree accelerated conflict detection. Module `ekf.rs` is historic (linear KF).
 
 pub mod dead_reckoning;
 pub mod ekf;
@@ -25,7 +25,7 @@ mod integration_tests {
     #[test]
     fn ekf_tracks_then_stca_sees_convergence() {
         // Two aircraft flying straight at each other at the same level; the
-        // EKF smooths noisy fixes, STCA must fire inside the lookahead.
+        // Kalman filter (CV) smooths noisy fixes, STCA must fire inside the lookahead.
         let site = SiteOrigin::new(SITE_LAT_DEG, SITE_LON_DEG, SITE_ALT_FT);
         let cfg = EkfConfig::default();
 
@@ -51,7 +51,7 @@ mod integration_tests {
             a.state()[2] / 0.3048,
             a.state()[3],
             a.state()[4],
-            a.state()[5],
+            a.state()[5] / 0.3048,
         );
         let sb = TrackSample::from_components(
             1,
@@ -62,10 +62,13 @@ mod integration_tests {
             b.state()[2] / 0.3048,
             b.state()[3],
             b.state()[4],
-            b.state()[5],
+            b.state()[5] / 0.3048,
         );
 
         assert!(sa.x_m < 10_000.0 && sb.x_m > -10_000.0, "targets converged");
+        let mut det = StcaDetector::new(StcaConfig::default());
+        let alerts = det.detect(&[sa, sb], 90_000);
+        assert!(!alerts.is_empty(), "STCA must alert on converging Kalman tracks, got 0");
         let _ = site;
     }
 }

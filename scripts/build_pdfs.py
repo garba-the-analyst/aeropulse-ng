@@ -126,7 +126,7 @@ def pitch():
     pdf.add_page(); pdf.bg(); pdf.kicker("Engineering depth"); pdf.h1("Safety-critical math, proven by tests", sz=26)
     cols = [
         ("DECODE", CIVIL, ["DF17 CRC-24 single-bit repair","Global CPR even/odd solve","Gillham altitude codec","ACARS CRC-16 + METAR/D-ATIS"]),
-        ("KINEMATICS", MILV, ["6-state EKF, Joseph-form update","Mahalanobis gate chi2(3)=16.27","R*-tree spatial index (full)","STCA 9.26 km / 305 m / 120 s"]),
+        ("KINEMATICS", MILV, ["6-state Kalman filter (CV), Joseph-form update","Mahalanobis gate chi2(3)=16.27","R*-tree spatial index (full)","STCA 9.26 km / 305 m / 120 s"]),
         ("WEATHER", AMBER, ["BDS 4,4/4,5 register codecs","ISA atmosphere + IDW blend","Vector-averaged wind","Harmattan dust-layer model"]),
         ("DEFENCE", ALERT, ["7700/7600/7500 alerting","Dark-target & silence detection","Polygon geofences + bands","Lead-pursuit intercept solver"]),
     ]
@@ -141,7 +141,7 @@ def pitch():
             pdf.set_xy(x+4, yy); pdf.set_font("dv","",9.5); pdf.set_text_color(*TEXT)
             pdf.multi_cell(56, 5, it); yy += pdf.get_y()-yy
         x += 70
-    ktxt(pdf, 16, 148, 265, 8, "104 automated checks green: Rust 90 · Python 14 · TypeScript strict · production bundle", 11, CIVIL, mono=True)
+    ktxt(pdf, 16, 148, 265, 8, "129 automated checks green: Rust 108 · Python 21 · TypeScript strict · production bundle", 11, CIVIL, mono=True)
     pdf.chrome(5, total, "TECHNOLOGY")
 
     # S6 demo timeline
@@ -205,7 +205,7 @@ def pitch():
     # S10 roadmap/team
     pdf.add_page(); pdf.bg(); pdf.kicker("Readiness & next steps"); pdf.h1("Working prototype today, RF tap next", sz=26)
     pdf.bullets([
-        ("Now — verified prototype", "Full engine + dual-display application; 104 automated checks; live demo scenario."),
+        ("Now — verified prototype", "Full engine + dual-display application; 129 automated checks; live demo scenario."),
         ("Next — real RF front-end", "RTL-SDR I/Q tap feeding the existing decoder (interfaces already shaped)."),
         ("Then — field trial", "Physical AWOS mast, Comm-B weather interrogation, station hardening."),
         ("Always — open engineering reference", "Documentation suite shipped with the codebase."),
@@ -304,14 +304,14 @@ def exec_summary():
     d.h2("Proposed solution")
     d.p("AeroPulse-NG is an air-gapped surveillance engine that turns commodity software-defined radios (about USD 150 of hardware) plus a standard PC into a working tactical radar display. It ingests over-the-air aviation telemetry with zero internet or cloud dependency, giving civil air traffic management (NAMA) and tactical command (NAF) a sovereign, locally maintainable traffic picture at a fraction of conventional cost.")
     d.h2("Technical approach")
-    d.p("A Rust/Tauri backend demodulates 1090 MHz Mode S ADS-B, resolving positions through Compact Position Reporting; a six-state Extended Kalman Filter smooths jitter and dead-reckons tracks through 30-second RF dropouts. An R*-tree spatial index drives continuous Short-Term Conflict Alerting against ICAO Doc 4444 separation minima (rendered 9.26 km / 305 m) within a 120-second lookahead. A triple-fusion weather matrix merges AWOS serial telemetry, ACARS D-ATIS broadcasts and Mode S BDS 4,4/4,5 downlinks into an offline 3D wind/temperature model tuned for harmattan operations. Defence overlays flag dark targets, squawk emergencies and geofence incursions, and compute intercept geometry. A hardware-accelerated display layer renders HF-STD-010A-compliant screens across dual operator monitors, in SI metric units per NCAA / ICAO Annex 5 policy.")
+    d.p("A Rust/Tauri backend demodulates 1090 MHz Mode S ADS-B, resolving positions through Compact Position Reporting; a six-state Kalman filter (constant-velocity, linear; module ekf.rs historic) smooths jitter and dead-reckons tracks through 30-second RF dropouts. An R*-tree spatial index drives continuous Short-Term Conflict Alerting against ICAO Doc 4444 separation minima (rendered 9.26 km / 305 m) within a 120-second lookahead. A triple-fusion weather matrix merges AWOS serial telemetry, ACARS D-ATIS broadcasts and Mode S BDS 4,4/4,5 downlinks into an offline 3D wind/temperature model tuned for harmattan operations. Defence overlays flag dark targets, squawk emergencies and geofence incursions, and compute intercept geometry. A hardware-accelerated display layer renders HF-STD-010A-compliant screens across dual operator monitors, in SI metric units per NCAA / ICAO Annex 5 policy.")
     d.h2("Likely impact")
-    d.p("Operational: conflict alerting and fused weather at aerodromes that cannot justify radar. Economic: over 99% capital reduction per station. Sovereignty: fully offline national capability. Educational: an open engineering reference for Nigerian avionics talent. Development stage: prototype core (decoder, EKF, STCA engines) verified by 104 automated checks; dual-display operator interface complete; RF front-end and field-trial hardware integration next.")
+    d.p("Operational: conflict alerting and fused weather at aerodromes that cannot justify radar. Economic: over 99% capital reduction per station. Sovereignty: fully offline national capability. Educational: an open engineering reference for Nigerian avionics talent. Development stage: prototype core (decoder, Kalman filter, STCA engines) verified by 129 automated checks; dual-display operator interface complete; RF front-end and field-trial hardware integration next.")
     d.add_page()
     d.h1("Verification Snapshot")
     d.table(["Suite","Checks","Covers"],[
-        ["Rust engine (cargo)","90","Decoders, CPR, EKF, R*-tree, STCA, fusion pipeline end-to-end"],
-        ["Python sidecar (pytest)","14","AWOS codec, METAR parser, DuckDB durability"],
+        ["Rust engine (cargo)","108","Decoders, CPR, Kalman filter, R*-tree, STCA, fusion pipeline end-to-end"],
+        ["Python sidecar (pytest)","21","AWOS codec, METAR parser, DuckDB durability"],
         ["TypeScript strict (tsc)","clean","Wire contracts, SI unit policy, components"],
         ["Production bundle (vite)","build","Dual-window workspace, 65 KB gzipped"],
     ],[45,20,129])
@@ -320,7 +320,7 @@ def exec_summary():
     d.bullets([
         "T+45 s — VL604 squawks 7700 (general emergency) with TC-28 status frame.",
         "T+70 s — NAF911 intercept crosses VL604's path: predicted miss under 1 km triggers STCA.",
-        "T+112 s — VL604 enters RF dropout: EKF dead-reckoning keeps the picture alive.",
+        "T+112 s — VL604 enters RF dropout: Kalman filter dead-reckoning keeps the picture alive.",
         "Rolling — dark target flagged, ACARS METAR and AWOS frames feeding the fusion matrix.",
     ])
     d.output(os.path.join(OUT, "AeroPulse-NG_Executive_Summary.pdf"))
@@ -345,7 +345,7 @@ def architecture_pdf():
     d.h2("2.1 The synthetic feed")
     d.p("The bench simulator advances a six-aircraft truth fleet and encodes every observation into genuine DF17 frames — CRC address parity included — before handing them to the same decoder. Deterministic seeding (xorshift64*) makes the frame timeline bit-reproducible. Scripted events: emergency squawk at T+45 s, an analytically solved intercept crossing VL604's path at T+70 s with a sub-kilometre predicted miss, scheduled RF dropouts, and a dark target that never broadcasts identity.")
     d.h1("3. Kinematics")
-    d.p("Each track carries a 6-state Extended Kalman Filter [x, y, z, vx, vy, vz] on the local East-North-Up tangent plane. The process model is piecewise-constant white-noise acceleration; covariance updates use the Joseph form for numerical stability; a Mahalanobis gate (chi-squared, 3 dof, 16.27) engages after a 12-fix acquisition warm-up — before the velocity state converges, constant-velocity prediction errors legitimately exceed steady-state bounds. During signal loss the filter simply keeps predicting: dead reckoning falls out of the same equations, and the display flags coasting tracks with dashed halos.")
+    d.p("Each track carries a 6-state Kalman filter (constant-velocity, linear; module ekf.rs historic) [x, y, z, vx, vy, vz] on the local East-North-Up tangent plane. The process model is piecewise-constant white-noise acceleration; covariance updates use the Joseph form for numerical stability; a Mahalanobis gate (chi-squared, 3 dof, 16.27) engages after a 12-fix acquisition warm-up — before the velocity state converges, constant-velocity prediction errors legitimately exceed steady-state bounds. During signal loss the filter simply keeps predicting: dead reckoning falls out of the same equations, and the display flags coasting tracks with dashed halos.")
     d.p("Conflict detection bulk-loads every track's 120-second predicted corridor into an R*-tree (Beckmann split criteria with forced reinsertion), retrieves candidate pairs by rectangle query, then refines with 5-second time-stepping that requires simultaneous infringement of the Doc 4444 minima — 9.26 km horizontal and 305 m vertical in the SI presentation, evaluated internally as the regulatory 5 NM / 1,000 ft constants.")
     d.add_page()
     d.h1("4. Triple-Fusion Weather")
@@ -386,7 +386,7 @@ def user_manual_pdf():
     d.h1("1. Requirements & Install")
     d.table(["Component","Minimum","Notes"],[
         ["OS","Ubuntu 22.04/24.04 (X11)","Windows/macOS untested here"],
-        ["CPU / RAM","4 cores / 8 GB","60 fps canvas + EKF inside budget"],
+        ["CPU / RAM","4 cores / 8 GB","60 fps canvas + Kalman filter (CV) inside budget"],
         ["Rust / Node / Python",">= 1.77 / 20 / 3.10","rustup + npm + sidecar venv"],
         ["Hardware","optional","3x RTL-SDR + AWOS; synthetic feed without"],
     ],[38,50,86])
@@ -401,18 +401,18 @@ def user_manual_pdf():
     d.image_fit("radar-scope.png", 172)
     d.h2("3.1 Master command bar (Screen 0)")
     d.bullets([
-        "Channel health chips for SDR-1/2/3, AWOS and the EKF engine — green nominal, flashing red fault.",
+        "Channel health chips for SDR-1/2/3, AWOS and the KF engine (Kalman filter) — green nominal, flashing red fault.",
         "Range-scale selector in kilometres (25-450 km, SI policy) with rings at 100/200/300 km.",
         "ZULU and WAT (UTC+1, no DST) clocks; EMERG 7700 override arms fleet-wide emergency for 30 s.",
     ])
     d.h2("3.2 Display 1 — tactical radar")
     d.p("Rotating sweep with phosphor fade; MIL-STD-2525D symbols (diamond civil, caret military, quadrangle unknown/anomaly); three-line Flight Data Blocks in SI (altitude metres, speed km/h, source and squawk); dead-reckoning halos; flashing red STCA connectors with minima labels; geofence polygons; R&B ruler tool (click anchor, move, double-click clears); intercept calculator panel.")
     d.h2("3.3 Display 2 — operations HUD")
-    d.p("Flight-strip bay (arrivals/departures with green/amber/red edge states), triple-fusion weather panel (AWOS surface block, upper-air matrix with provenance, dust-layer top, raw D-ATIS/METAR feed), threat matrix, and diagnostics with the spectrum plot and EKF latency gauge against the 2 ms ceiling.")
+    d.p("Flight-strip bay (arrivals/departures with green/amber/red edge states), triple-fusion weather panel (AWOS surface block, upper-air matrix with provenance, dust-layer top, raw D-ATIS/METAR feed), threat matrix, and diagnostics with the spectrum plot (simulated: message-rate synthesis until RF tap) and KF latency (Kalman filter) gauge against the 2 ms ceiling.")
     d.add_page()
     d.h1("4. Operational Walkthrough")
     d.bullets([
-        "Boot: six tracks already filtered (EKF converges in ~12 fixes); weather fills within the first ACARS/AWOS cadence.",
+        "Boot: six tracks already filtered (Kalman filter converges in ~12 fixes); weather fills within the first ACARS/AWOS cadence.",
         "T+45 s: VL604 squawks 7700 — symbol, FDB annotation and strip edge go red; threat matrix logs the emergency.",
         "T+60-80 s: NAF911 crosses VL604's path — red dashed STCA connector flashes at 2 Hz with minima label.",
         "T+112 s: VL604 drops off RF — dashed coasting halo, FDB source flips to DR, leader line keeps projecting.",
@@ -447,7 +447,7 @@ def tech_ref_pdf():
         "xorshift64* seeded: same seed reproduces the byte-identical frame timeline.",
     ])
     d.h1("2. Kinematics Layer (src-tauri/src/kinematics/)")
-    d.p("linalg.rs: row-major fixed-size kernels, Cholesky factorisation returning None on non-positive pivots, multi-RHS solving used for both Kalman gains and Mahalanobis distances. ekf.rs: 6-state EKF, sigma_a = 3.5 m/s^2 default, Joseph-form updates, gate chi2(3)=16.27 engaged after 12 accepted fixes. dead_reckoning.rs: SiteOrigin series-expanded metres-per-degree, leader-line projection, analytic closest approach. rtree.rs: full R* (overlap-enlargement ChooseSubtree, margin-minimising split, 30% forced reinsertion), arena-backed. stca_math.rs: corridor bulk-load, candidate retrieval, 5 s time-stepped refinement requiring simultaneous infringement.")
+    d.p("linalg.rs: row-major fixed-size kernels, Cholesky factorisation returning None on non-positive pivots, multi-RHS solving used for both Kalman gains and Mahalanobis distances. ekf.rs (historic name, linear KF): 6-state Kalman filter (CV), sigma_a = 3.5 m/s^2 default, Joseph-form updates, gate chi2(3)=16.27 engaged after 12 accepted fixes. dead_reckoning.rs: SiteOrigin series-expanded metres-per-degree, leader-line projection, analytic closest approach. rtree.rs: full R* (overlap-enlargement ChooseSubtree, margin-minimising split, 30% forced reinsertion), arena-backed. stca_math.rs: corridor bulk-load, candidate retrieval, 5 s time-stepped refinement requiring simultaneous infringement.")
     d.h1("3. Weather Fusion (src-tauri/src/weather_fusion/)")
     d.p("BDS 4,4: WS[0..12] kt, WD[12..23] x360/2048 deg, validity flag, SAT[24..40] x0.25 C. BDS 4,5: turbulence/shear/microburst pairs, icing state with all-invalid sentinel, ISA deviation x0.1 C. Encoders and decoders round-trip. spatial_interp: ISA atmosphere (lapse 6.5 C/km, isothermal above tropopause), IDW with altitude penalty, vector-averaged wind, ISA-blended pressure, confidence from diversity x range; dust layer from visibility plus thermal bump above 28 C. Fusion engine: 512-node deque, 15 min TTL, priority chain AWOS > D-ATIS > METAR (first writer wins a gap, AWOS always overwrites).")
     d.h1("4. Defence (src-tauri/src/defense/)")
@@ -467,12 +467,12 @@ def tech_ref_pdf():
         ["acars_decoder","5","framing, checksum corruption, classification"],
         ["sdr_registry","3","serial binding, offline degradation"],
         ["simulator","10","100% decode rate, truth coordinates, determinism, STCA geometry"],
-        ["kinematics","17","EKF convergence/gating, R*-tree integrity, STCA cases"],
+        ["kinematics","17","Kalman filter convergence/gating, R*-tree integrity, STCA cases"],
         ["weather_fusion","14","ISA values, IDW, priority chain, BDS round-trips"],
         ["defense","16","squawk mapping, geofence cycles, intercept envelope"],
         ["engine","10","110 s end-to-end: identity, STCA, coasting, breaches"],
         ["sidecar bridge","6","codec round-trips, spawn degradation"],
-        ["python sidecar","14","AWOS codec, METAR, DuckDB durability"],
+        ["python sidecar","21","AWOS codec, METAR, DuckDB durability"],
     ],[40,16,118])
     d.output(os.path.join(OUT, "AeroPulse-NG_Technical_Reference.pdf"))
     print("tech reference: pages", d.page_no())

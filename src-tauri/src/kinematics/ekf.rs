@@ -1,4 +1,6 @@
-//! 6-State Extended Kalman Filter.
+//! 6-State Kalman Filter (constant-velocity, linear).
+//! Historic module name `ekf.rs` retained for path stability; the filter is
+//! linear (no Jacobian) — it is a Kalman filter, not an Extended Kalman Filter.
 //!
 //! State vector `X = [x, y, z, vx, vy, vz]^T` expressed in metres and
 //! metres-per-second on the local East-North-Up tangent plane anchored at the

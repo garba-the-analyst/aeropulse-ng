@@ -58,7 +58,7 @@ feasible (guards against pathological oscillation). `minimum_feasible_speed_kt`
 bisects the feasibility predicate (~22 probes).
 
 ⚠ Bearing convention note: this module measures headings from **north** using
-`(sin θ, cos θ)` on (east, north) — identical to the EKF/course convention. A
+`(sin θ, cos θ)` on (east, north) — identical to the Kalman filter (CV)/course convention. A
 mid-development version mixed `atan2(y,x)` from-east maths with from-north unit
 vectors and flew the interceptor north when ordered east; the test suite now pins
 cardinal cases explicitly (`head_on_intercept_is_straight_line` asserts 90.0°T ±0.5).

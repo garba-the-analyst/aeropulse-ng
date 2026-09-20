@@ -233,7 +233,7 @@ def executive_content(doc: Document) -> None:
     for heading, body in [
         ("Problem", "Nigeria's airspace is monitored largely through expensive imported primary and secondary surveillance radar — installations costing millions of dollars, demanding specialist maintenance, yet still leaving low-altitude corridors, secondary aerodromes and terrain-shadowed sectors under-covered. When connectivity or a radar head fails, controllers lose the traffic picture precisely when harmattan haze, diversion surges or military activity raise risk. Non-cooperative and transponder-silent aircraft widen the gap further."),
         ("Proposed solution", "AeroPulse-NG is an air-gapped surveillance engine that turns commodity software-defined radios (about USD 150 of hardware) plus a standard PC into a working tactical radar display. It ingests over-the-air aviation telemetry with zero internet or cloud dependency, giving civil air traffic management (NAMA) and tactical command (NAF) a sovereign, locally maintainable traffic picture at a fraction of conventional cost."),
-        ("Technical approach", "A Rust/Tauri backend demodulates 1090 MHz Mode S ADS-B, resolving positions through Compact Position Reporting; a six-state Extended Kalman Filter smooths jitter and dead-reckons tracks through 30-second RF dropouts. An R*-tree spatial index drives continuous Short-Term Conflict Alerting against ICAO Doc 4444 separation minima (rendered 9.26 km / 305 m) within a 120-second lookahead. A triple-fusion weather matrix merges AWOS serial telemetry, ACARS D-ATIS broadcasts and Mode S BDS 4,4/4,5 downlinks into an offline 3D wind/temperature model tuned for harmattan operations. Defence overlays flag dark targets, squawk emergencies and geofence incursions, and compute intercept geometry. A hardware-accelerated display layer renders HF-STD-010A-compliant screens across dual operator monitors, in SI metric units per NCAA / ICAO Annex 5 policy."),
+        ("Technical approach", "A Rust/Tauri backend demodulates 1090 MHz Mode S ADS-B, resolving positions through Compact Position Reporting; a six-state Kalman filter (constant-velocity, linear; module ekf.rs historic) smooths jitter and dead-reckons tracks through 30-second RF dropouts. An R*-tree spatial index drives continuous Short-Term Conflict Alerting against ICAO Doc 4444 separation minima (rendered 9.26 km / 305 m) within a 120-second lookahead. A triple-fusion weather matrix merges AWOS serial telemetry, ACARS D-ATIS broadcasts and Mode S BDS 4,4/4,5 downlinks into an offline 3D wind/temperature model tuned for harmattan operations. Defence overlays flag dark targets, squawk emergencies and geofence incursions, and compute intercept geometry. A hardware-accelerated display layer renders HF-STD-010A-compliant screens across dual operator monitors, in SI metric units per NCAA / ICAO Annex 5 policy."),
         ("Likely impact", "Operational: conflict alerting and fused weather at aerodromes that cannot justify radar. Economic: over 99% capital reduction per station. Sovereignty: fully offline national capability. Educational: an engineering reference for Nigerian avionics talent. Development stage: prototype core verified by automated checks; dual-display operator interface complete; RF front-end and field-trial hardware integration next."),
     ]:
         doc.add_heading(heading, level=1)
@@ -241,8 +241,8 @@ def executive_content(doc: Document) -> None:
     doc.add_page_break()
     doc.add_heading("Verification Snapshot", level=1)
     add_doc_table(doc, ["Area", "Result", "Evidence"], [
-        ["Rust engine", "90 tests passed", "Decoder, CPR, EKF, R*-tree, STCA and engine integration"],
-        ["Python sidecar", "14 tests passed", "AWOS codec, METAR parser and DuckDB durability"],
+        ["Rust engine", "108 tests passed", "Decoder, CPR, Kalman filter, R*-tree, STCA and engine integration"],
+        ["Python sidecar", "21 tests passed", "AWOS codec, METAR parser and DuckDB durability"],
         ["Frontend", "TypeScript clean", "Strict typecheck and Vite multi-page build"],
         ["Desktop shell", "Build verified", "Tauri v2 host linked on Linux with webkit development files"],
     ], [1.4, 1.5, 3.6])
@@ -268,7 +268,7 @@ def architecture_content(doc: Document) -> None:
     add_doc_bullets(doc, [
         "The simulator creates genuine DF17 frames and sends them through the same decoder used by the future RF path.",
         "The engine queues observations, predicts once per tick, then fuses measurements against the current epoch.",
-        "The EKF uses metres and metres per second internally; operator displays convert to SI presentation units in one utility module.",
+        "The Kalman filter (CV) uses metres and metres per second internally; operator displays convert to SI presentation units in one utility module.",
         "Safety thresholds remain ICAO constants internally: 5 NM horizontal and 1,000 ft vertical, displayed as 9.26 km and 305 m.",
         "Optional persistence and simulated weather degrade independently and must not stop the surveillance engine.",
     ])
@@ -329,7 +329,7 @@ def technical_content(doc: Document) -> None:
     doc.add_paragraph("mode_s_decoder.rs accepts 7-byte and 14-byte Mode S frames, validates CRC-24 address/even parity, attempts single-bit repair and decodes DF17 identity, airborne position, velocity and status messages. CPR pairs are resolved inside a 10-second epoch. acars_decoder.rs parses SOH/MODE/TAIL/ACK/LABEL/BLOCK/STX/TEXT/ETX/BCS and classifies METAR, SPECI and D-ATIS reports.")
     doc.add_heading("2. Kinematics", level=1)
     add_doc_table(doc, ["Component", "Contract"], [
-        ["EKF", "State [x,y,z,vx,vy,vz], ENU metres and metres per second; Joseph covariance update; acquisition warm-up and Mahalanobis gate"],
+        ["Kalman filter (CV)", "State [x,y,z,vx,vy,vz], ENU metres and metres per second; Joseph covariance update; acquisition warm-up and Mahalanobis gate"],
         ["Geodesy", "SiteOrigin converts WGS-84 latitude/longitude to local ENU and back"],
         ["R*-tree", "AABB index with overlap-based subtree selection, margin split and forced reinsertion"],
         ["STCA", "5 NM / 1,000 ft thresholds, 120-second lookahead, 5-second refinement"],
@@ -424,7 +424,7 @@ def build_pitch() -> None:
     # 5 Engineering
     slide = add_slide("", "Engineering", MILV)
     add_text(slide, "Engineering depth is measurable, not decorative", 0.7, 0.65, 12, 0.65, 27, WHITE, True)
-    blocks = [("Signal", ["DF17 CRC validation and repair", "CPR even/odd position resolution", "ACARS message integrity"]), ("Track", ["6-state Extended Kalman Filter", "R*-tree spatial indexing", "Dead-reckoning during dropouts"]), ("Safety", ["9.26 km / 305 m separation view", "120-second lookahead", "Emergency and silence alerts"]), ("Weather", ["AWOS + ACARS + BDS inputs", "Vector wind interpolation", "Standard-atmosphere fallback"])]
+    blocks = [("Signal", ["DF17 CRC validation and repair", "CPR even/odd position resolution", "ACARS message integrity"]), ("Track", ["6-state Kalman filter (CV)", "R*-tree spatial indexing", "Dead-reckoning during dropouts"]), ("Safety", ["9.26 km / 305 m separation view", "120-second lookahead", "Emergency and silence alerts"]), ("Weather", ["AWOS + ACARS + BDS inputs", "Vector wind interpolation", "Standard-atmosphere fallback"])]
     x = 0.7
     for heading, items in blocks:
         shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, PptInches(x), PptInches(1.65), PptInches(2.95), PptInches(4.55))

@@ -46,8 +46,8 @@ def architecture():
     box(d,(30,100,430,195),"RF SOURCES",["SDR-1 1090 MHz ADS-B / Mode S","SDR-2 131.55 MHz ACARS","AWOS mast RS-485 (sidecar)"],CIVIL)
     box(d,(30,215,430,300),"SIMULATOR (bench mode)",["6-aircraft truth fleet","encodes genuine DF17 frames","same decoders as real RF"],AMBER)
     box(d,(500,100,950,300),"HARDWARE DECODE LAYER",["mode_s_decoder  DF17 · CRC-24 repair","                 CPR even/odd -> lat/lon","                 Gillham alt · velocity","acars_decoder   framing · CRC-16","                 METAR / D-ATIS classify","sdr_registry    serial-lock channels"],MILV)
-    box(d,(500,340,950,565),"SURVEILLANCE ENGINE  (60 Hz)",["queue > EKF predict > fuse pos/vel","STCA scan 15 Hz (R*-tree)","   Doc-4444: 9.26 km / 305 m / 120 s","anomaly scan 1 Hz · geofence 2 Hz","","EngineSnapshot {tracks·FDB·STCA·wx}","tokio bus -> telemetry://snapshot"],CIVIL)
-    box(d,(1020,100,1530,262),"KINEMATICS",["6-state EKF [x y z vx vy vz]","Joseph-form covariance update","Mahalanobis gate chi2(3)=16.27","dead-reckoning coasting","leader-line projection 120 s"],MILV)
+    box(d,(500,340,950,565),"SURVEILLANCE ENGINE  (60 Hz)",["queue > KF (CV) predict > fuse pos/vel","STCA scan 15 Hz (R*-tree)","   Doc-4444: 9.26 km / 305 m / 120 s","anomaly scan 1 Hz · geofence 2 Hz","","EngineSnapshot {tracks·FDB·STCA·wx}","tokio bus -> telemetry://snapshot"],CIVIL)
+    box(d,(1020,100,1530,262),"KINEMATICS",["6-state KF (CV) [x y z vx vy vz]","Joseph-form covariance update","Mahalanobis gate chi2(3)=16.27","dead-reckoning coasting","leader-line projection 120 s"],MILV)
     box(d,(1020,282,1530,425),"WEATHER FUSION",["AWOS > D-ATIS > BDS 4,4/4,5","IDW spatial blend (vector wind)","ISA fallback + confidence","Harmattan dust-layer estimate"],AMBER)
     box(d,(1020,445,1530,585),"DEFENCE OVERLAYS",["7700/7600/7500 alerting","dark-target & silence detect","polygon geofences + bands","lead-pursuit intercept solver"],ALERT)
     box(d,(30,380,430,565),"DISPLAY 1 — RADAR CANVAS",["60 fps PPI · rings 100/200/300 km","MIL-STD-2525D symbols","3-line FDB tags (SI units)","flashing STCA connectors 2 Hz","R&B ruler · geofence overlay"],CIVIL)
@@ -112,7 +112,7 @@ def radar_scope():
     X=W-380
     d.rounded_rectangle([X-16,60,W-20,H-60],radius=10,fill=PANEL,outline=GRID,width=2)
     d.text((X,76),"TACTICAL PICTURE — LIVE",font=fnt(15,True),fill=WHITE)
-    rows=[("SDR-1 1090MHz",True,"412 msg/s"),("SDR-2 ACARS",True,"2.1 msg/s"),("SDR-3 GUARD",False,"offline"),("AWOS RS-485",True,"QNH 1013.2"),("EKF ENGINE",True,"248 us")]
+    rows=[("SDR-1 1090MHz",True,"412 msg/s"),("SDR-2 ACARS",True,"2.1 msg/s"),("SDR-3 GUARD",False,"offline"),("AWOS RS-485",True,"QNH 1013.2"),("KF ENGINE",True,"248 us")]
     yy=108
     for name,ok,stat in rows:
         col=CIVIL if ok else ALERT
@@ -134,7 +134,7 @@ def timeline():
     marks=[(0,"BOOT","6 tracks airborne;\nSTCA inside lookahead",CIVIL),
            (45,"SQUAWK 7700","VL604 general emergency\n+ TC-28 status frame",ALERT),
            (70,"STCA FLASH","NAF911 intercept <1 km\npredicted miss",RED_ := (255,23,68)),
-           (112,"RF DROPOUT","VL604 coasts on EKF\ndead reckoning 28 s",AMBER),
+           (112,"RF DROPOUT","VL604 coasts on KF (CV)\ndead reckoning 28 s",AMBER),
            (150,"DARK TARGET","0BADC0 flagged:\nno identity broadcast",AMBER)]
     span=x1-x0
     for t,name,desc,col in marks:

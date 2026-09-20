@@ -18,7 +18,9 @@ right-hand-side columns. Covariance symmetrisation enforces symmetry after every
 update. The solver is the workhorse behind Kalman gains *and* Mahalanobis
 distances; its correctness is pinned by a Gaussian-elimination cross-check.
 
-## `ekf.rs` — 6-State Extended Kalman Filter
+## `ekf.rs` — 6-State Kalman Filter (constant-velocity, linear)
+
+> **Note:** Module path `ekf.rs` is historic. The filter is **linear** constant-velocity (no Jacobian, no non-linear measurement), i.e. a Kalman filter (KF), not an Extended Kalman Filter. Historical EKF label is retained only for file path stability.
 
 State `X = [x, y, z, vx, vy, vz]ᵀ` on the local ENU tangent plane (metres,
 m·s⁻¹). Process model is piecewise-constant white-noise acceleration with
