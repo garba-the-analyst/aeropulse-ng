@@ -134,6 +134,7 @@ pub struct SurveillanceEngine {
     emergency_override_until_ms: u64,
     hardware: Vec<HardwareStatus>,
     icao_cache: crate::hardware::mode_s_decoder::IcaoCache,
+    last_stca: Vec<STCAAlert>,
 }
 
 impl SurveillanceEngine {
@@ -196,6 +197,7 @@ impl SurveillanceEngine {
                 .collect()
             },
             icao_cache: crate::hardware::mode_s_decoder::IcaoCache::new(60_000, 4096),
+            last_stca: Vec::new(),
         }
     }
 
@@ -471,15 +473,21 @@ DecodedMessage::GroundRelay { message, .. } => {
         // 2. Fuse queued measurements against the freshly propagated state.
         self.drain_pending(now_ms);
 
-        // 2. Periodic subsystem scans.
+        // 2. Periodic subsystem scans — STCA is level-triggered, cache last result
         let stca_due =
             dt_s > 0.0 && (self.tick_count as f64 * (1.0 / self.cfg.tick_hz)) % (1.0 / self.cfg.stca_hz)
                 < dt_s.max(0.001);
-        let mut active_alerts: Vec<STCAAlert> = Vec::new();
-        if stca_due || self.tick_count == 1 {
+        let active_alerts = if stca_due || self.tick_count == 1 {
             let samples = self.collect_samples();
-            active_alerts = self.stca.detect(&samples, now_ms);
-        }
+            let alerts = self.stca.detect(&samples, now_ms);
+            self.last_stca = alerts.clone();
+            alerts
+        } else {
+            // Expire alerts for tracks that have been dropped
+            self.last_stca
+                .retain(|a| self.tracks.contains_key(&a.icao_a) && self.tracks.contains_key(&a.icao_b));
+            self.last_stca.clone()
+        };
 
         let anomaly_due = self.tick_count == 1
             || dt_s > 0.0

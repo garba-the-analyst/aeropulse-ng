@@ -184,34 +184,110 @@ impl StcaDetector {
     }
 
     fn refine_pair(&self, a: &TrackSample, b: &TrackSample, now_ms: u64) -> Option<STCAAlert> {
-        let hz_limit = self.cfg.horizontal_nm * NM_TO_M;
-        let vt_limit = self.cfg.vertical_ft;
+        let r = self.cfg.horizontal_nm * NM_TO_M;
+        let v = self.cfg.vertical_ft;
+        let l = self.cfg.lookahead_s;
 
-        let steps = (self.cfg.lookahead_s / self.cfg.refine_step_s).ceil() as usize;
-        let mut min_hz = f64::INFINITY;
-        let mut min_vt = f64::INFINITY;
-        let mut t_closest = 0.0f64;
-        let mut conflicted = false;
+        // Relative motion at t=0
+        let dx0 = b.x_m - a.x_m;
+        let dy0 = b.y_m - a.y_m;
+        let dz0 = b.z_ft - a.z_ft;
+        let dvx = b.vx_ms - a.vx_ms;
+        let dvy = b.vy_ms - a.vy_ms;
+        let dvz = b.vz_fps - a.vz_fps;
 
-        for i in 0..=steps {
-            let dt = i as f64 * self.cfg.refine_step_s;
-            let (ax, ay) = a.pos(dt);
-            let (bx, by) = b.pos(dt);
-            let dh = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
-            let dv = (b.alt_ft(dt) - a.alt_ft(dt)).abs();
+        // Horizontal interval: |dp + dv*t|^2 < R^2  => a t^2 + b t + c < 0
+        let a_h = dvx * dvx + dvy * dvy;
+        let b_h = 2.0 * (dx0 * dvx + dy0 * dvy);
+        let c_h = dx0 * dx0 + dy0 * dy0 - r * r;
 
-            if dh < min_hz {
-                min_hz = dh;
-                t_closest = dt;
+        let h_interval = if a_h.abs() < 1e-9 {
+            // dv ~ 0
+            if c_h < 0.0 {
+                Some((0.0, l))
+            } else {
+                None
             }
-            min_vt = min_vt.min(dv);
-
-            if dh < hz_limit && dv < vt_limit {
-                conflicted = true;
+        } else {
+            let disc = b_h * b_h - 4.0 * a_h * c_h;
+            if disc < 0.0 {
+                None
+            } else {
+                let sq = disc.sqrt();
+                let t1 = (-b_h - sq) / (2.0 * a_h);
+                let t2 = (-b_h + sq) / (2.0 * a_h);
+                let (lo, hi) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+                let clo = lo.max(0.0).min(l);
+                let chi = hi.max(0.0).min(l);
+                if chi > clo && hi >= 0.0 && lo <= l {
+                    Some((clo, chi))
+                } else {
+                    None
+                }
             }
+        };
+
+        // Vertical interval: |dz0 + dvz*t| < V
+        let v_interval = if dvz.abs() < 1e-9 {
+            if dz0.abs() < v {
+                Some((0.0, l))
+            } else {
+                None
+            }
+        } else {
+            // -V < dz0 + dvz*t < V  => (-V - dz0)/dvz < t < (V - dz0)/dvz
+            let t1 = (-v - dz0) / dvz;
+            let t2 = (v - dz0) / dvz;
+            let (lo, hi) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+            let clo = lo.max(0.0).min(l);
+            let chi = hi.max(0.0).min(l);
+            if chi > clo && hi >= 0.0 && lo <= l {
+                Some((clo, chi))
+            } else {
+                None
+            }
+        };
+
+        let (hl, hh) = h_interval?;
+        let (vl, vh) = v_interval?;
+        let ol = hl.max(vl);
+        let oh = hh.min(vh);
+        if oh <= ol {
+            return None;
         }
 
-        conflicted.then(|| STCAAlert {
+        // Overlap exists → conflict
+        // Compute true minima within overlap
+        // Horizontal minimum: closest approach of relative motion
+        let t_hmin = if a_h.abs() < 1e-9 {
+            0.0
+        } else {
+            // t at min horizontal distance: -b/(2a)
+            let t0 = -b_h / (2.0 * a_h);
+            t0.clamp(ol, oh)
+        };
+        let (ax, ay) = a.pos(t_hmin);
+        let (bx, by) = b.pos(t_hmin);
+        let min_hz = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+
+        // Vertical minimum within overlap: closest to dz=0 if 0 is in interval, else at endpoint nearer to 0
+        let mut min_vt = f64::INFINITY;
+        for &t in &[ol, oh, t_hmin] {
+            let dv = (b.alt_ft(t) - a.alt_ft(t)).abs();
+            if dv < min_vt {
+                min_vt = dv;
+            }
+        }
+        // Also check if dz crosses 0 within overlap
+        if dz0.signum() != (dz0 + dvz * oh).signum() {
+            min_vt = min_vt.min(0.0);
+        }
+
+        // Time to closest is time of minimum horizontal separation within overlap
+        // For reporting, use t_hmin clamped to overlap (already)
+        let t_closest = t_hmin;
+
+        Some(STCAAlert {
             id: format!("{}-{}", a.icao24, b.icao24),
             icao_a: a.icao24.clone(),
             callsign_a: a.callsign.clone(),
