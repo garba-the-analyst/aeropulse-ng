@@ -4,7 +4,7 @@ version = "2.4.0"
 description = "AeroPulse-NG Tactical Radar & Airspace Surveillance Engine"
 authors = ["Garba"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.78"
 default-run = "aeropulse-ng"
 
 [features]
