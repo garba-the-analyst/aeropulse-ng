@@ -153,6 +153,8 @@ pub struct Simulator {
     last_acars_emit: f64,
     last_upper_air_emit: f64,
     last_awos_emit: f64,
+    last_df11_emit: Vec<f64>,
+    last_df4_emit: Vec<f64>,
     awos_qnh: f32,
     awos_wind_dir: f32,
     awos_wind_kt: f32,
@@ -287,6 +289,8 @@ impl Simulator {
             last_acars_emit: f64::NEG_INFINITY,
             last_upper_air_emit: f64::NEG_INFINITY,
             last_awos_emit: f64::NEG_INFINITY,
+            last_df11_emit: vec![f64::NEG_INFINITY; n],
+            last_df4_emit: vec![f64::NEG_INFINITY; n],
             awos_qnh: 1013.2,
             awos_wind_dir: 182.0,
             awos_wind_kt: 11.0,
@@ -330,6 +334,27 @@ impl Simulator {
                 events.push(IngestEvent::Raw1090Frame(encode_identity_frame(
                     ac.icao24, ac.callsign,
                 )));
+            }
+            if self.t_s - self.last_df11_emit[i] >= 8.0 {
+                self.last_df11_emit[i] = self.t_s;
+                events.push(IngestEvent::Raw1090Frame(encode_df11_frame(ac.icao24)));
+            }
+            if self.t_s - self.last_df4_emit[i] >= 12.0 {
+                self.last_df4_emit[i] = self.t_s;
+                let ac13 = encode_ac13(ac.altitude_ft);
+                // DF4: DF=4, FS=0, DR=0, UM=0, AC=ac13
+                let mut payload = vec![0u8; 7];
+                payload[0] = (4 << 3) | 0;
+                payload[1] = 0;
+                payload[2] = ((ac13 >> 8) & 0xFF) as u8;
+                payload[3] = (ac13 & 0xFF) as u8;
+                // Parity is AP: crc ^ icao
+                let rem = crate::hardware::mode_s_decoder::crc25(&payload);
+                let parity = rem ^ ac.icao24;
+                payload[4] = (parity >> 16) as u8;
+                payload[5] = (parity >> 8) as u8;
+                payload[6] = parity as u8;
+                events.push(IngestEvent::Raw1090Frame(payload));
             }
 
             let squawk_now = ac.squawk_at(self.t_s);
@@ -512,6 +537,76 @@ pub fn encode_identity_frame(icao24: u32, callsign: &str) -> Vec<u8> {
 
 pub fn encode_status_frame(icao24: u32, emergency_state: u64) -> Vec<u8> {
     df17_frame(build_status_me(emergency_state), icao24)
+}
+
+fn ap_frame_56(df: u8, first_byte_extra: u8, icao: u32, data24: u32) -> Vec<u8> {
+    // 56-bit: 32 bits payload + 24 bits parity (AP)
+    let mut payload = vec![0u8; 4];
+    payload[0] = (df << 3) | (first_byte_extra & 0x07);
+    payload[1] = ((data24 >> 16) & 0xFF) as u8;
+    payload[2] = ((data24 >> 8) & 0xFF) as u8;
+    payload[3] = (data24 & 0xFF) as u8;
+    let mut full = vec![0u8; 7];
+    full[..4].copy_from_slice(&payload);
+    let rem = crate::hardware::mode_s_decoder::crc25(&full);
+    let parity = rem ^ icao;
+    full[4] = (parity >> 16) as u8;
+    full[5] = (parity >> 8) as u8;
+    full[6] = parity as u8;
+    full
+}
+
+fn ap_frame_112(df: u8, first_byte_extra: u8, icao: u32, ac13: u16, mb: u64) -> Vec<u8> {
+    // 112-bit: 88 bits payload (11 bytes) + 24 bits parity
+    let mut payload = vec![0u8; 11];
+    payload[0] = (df << 3) | (first_byte_extra & 0x07);
+    // AC13 at bits 19..32 (13 bits) -> bytes 2..3 plus bit of byte 4
+    payload[2] = ((ac13 >> 8) & 0xFF) as u8;
+    payload[3] = (ac13 & 0xFF) as u8;
+    // MB at bytes 4..10 (56 bits)
+    payload[4] = ((mb >> 48) & 0xFF) as u8;
+    payload[5] = ((mb >> 40) & 0xFF) as u8;
+    payload[6] = ((mb >> 32) & 0xFF) as u8;
+    payload[7] = ((mb >> 24) & 0xFF) as u8;
+    payload[8] = ((mb >> 16) & 0xFF) as u8;
+    payload[9] = ((mb >> 8) & 0xFF) as u8;
+    payload[10] = (mb & 0xFF) as u8;
+    let mut full = vec![0u8; 14];
+    full[..11].copy_from_slice(&payload);
+    let rem = crate::hardware::mode_s_decoder::crc25(&full);
+    let parity = rem ^ icao;
+    full[11] = (parity >> 16) as u8;
+    full[12] = (parity >> 8) as u8;
+    full[13] = parity as u8;
+    full
+}
+
+pub fn encode_df11_frame(icao24: u32) -> Vec<u8> {
+    // DF11: CA=5, AA=ICAO, PI=0 -> payload 4 bytes, parity makes remainder 0
+    let mut payload = vec![0u8; 7];
+    payload[0] = (11 << 3) | 5;
+    payload[1] = ((icao24 >> 16) & 0xFF) as u8;
+    payload[2] = ((icao24 >> 8) & 0xFF) as u8;
+    payload[3] = (icao24 & 0xFF) as u8;
+    // PI is 0, so parity is crc of payload
+    let mut full = vec![0u8; 7];
+    full[..4].copy_from_slice(&payload[..4]);
+    let rem = crate::hardware::mode_s_decoder::crc25(&full);
+    // For DF11 IC=0, remainder should be 0, so parity = rem
+    full[4] = (rem >> 16) as u8;
+    full[5] = (rem >> 8) as u8;
+    full[6] = rem as u8;
+    full
+}
+
+fn encode_ac13(alt_ft: f64) -> u16 {
+    let n = ((alt_ft + 1000.0) / 25.0).round() as u32 & 0x07FF;
+    let mut field: u16 = 0;
+    field |= (((n >> 4) & 0x3F) as u16) << 7;
+    field |= (((n >> 3) & 0x01) as u16) << 5;
+    field |= 1u16 << 4;
+    field |= (n & 0x0F) as u16;
+    field
 }
 
 #[cfg(test)]

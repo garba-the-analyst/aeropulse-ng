@@ -758,6 +758,27 @@ pub fn decode_ac13(field13: u16) -> Option<f64> {
     }
 }
 
+/// Encodes altitude to 13-bit AC13 field (Q=1, M=0, 25ft)
+pub fn encode_ac13(alt_ft: f64) -> u16 {
+    let n = ((alt_ft + 1000.0) / 25.0).round() as u32 & 0x07FF;
+    // Brute-force inverse of decode_ac13 to ensure correctness for all N
+    for ac in 0..0x2000u16 {
+        if ac & (1 << 6) != 0 {
+            continue;
+        }
+        if ac & (1 << 4) == 0 {
+            continue;
+        }
+        if let Some(decoded) = decode_ac13(ac) {
+            let nd = ((decoded + 1000.0) / 25.0).round() as u32 & 0x07FF;
+            if nd == n {
+                return ac;
+            }
+        }
+    }
+    0
+}
+
 /// Decodes Mode A squawk from 13-bit ID field (DF5/21).
 /// Bit order: C1 A1 C2 A2 C4 A4 X B1 D1 B2 D2 B4 D4 → octal A B C D
 pub fn field13_to_squawk(field13: u16) -> String {
