@@ -923,4 +923,53 @@ mod tests {
             active: false,
         };
     }
+
+    #[test]
+    fn stca_alerts_are_continuous_between_scans() {
+        let mut h = Harness {
+            engine: SurveillanceEngine::new(EngineConfig::default()),
+            sim: Simulator::new(SimulatorConfig::default()),
+            sim_ms: 1_700_000_000_000,
+            max_breaches: 0,
+        };
+        // Run standard harness ~75s at 250ms cadence so NAF911 vs VL604 conflict is active
+        h.run_for(75.0);
+        let snap = h.engine.latest();
+        assert!(
+            snap.stca_alerts
+                .iter()
+                .any(|a| a.icao_a.starts_with("0611") || a.icao_b.starts_with("0611")),
+            "conflict must be active before probe"
+        );
+        // Now tick ENGINE alone at 16ms for 5s with no new ingest
+        let mut with_alert = 0usize;
+        let mut transitions = 0usize;
+        let mut prev_has = !h.engine.latest().stca_alerts.is_empty();
+        for _ in 0..(5000 / 16) {
+            h.sim_ms += 16;
+            let s = h.engine.tick(h.sim_ms);
+            let has = !s.stca_alerts.is_empty();
+            if has {
+                with_alert += 1;
+            }
+            if has != prev_has {
+                transitions += 1;
+                prev_has = has;
+            }
+        }
+        // Must be non-empty on EVERY snapshot while geometry persists (allow 0 transitions beyond initial)
+        assert_eq!(
+            with_alert,
+            5000 / 16,
+            "STCA must be continuous between scans (got {}/{} with {} transitions)",
+            with_alert,
+            5000 / 16,
+            transitions
+        );
+        assert!(
+            transitions <= 2,
+            "too many on/off transitions {} (strobe bug)",
+            transitions
+        );
+    }
 }
