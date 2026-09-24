@@ -2,5 +2,6 @@
 
 pub mod acars_decoder;
 pub mod mode_s_decoder;
+pub mod replay;
 pub mod simulator;
 pub mod sdr_registry;
