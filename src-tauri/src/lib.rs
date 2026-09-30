@@ -16,7 +16,11 @@ mod runtime;
 #[cfg(feature = "tauri-host")]
 use commands::AppShared;
 #[cfg(feature = "tauri-host")]
-use {engine::SurveillanceEngine, std::sync::Arc};
+use {
+    engine::SurveillanceEngine,
+    hardware::replay::{OsintConfig, SharedReplay},
+    std::sync::{Arc, Mutex},
+};
 
 /// Boots the desktop host: dual-window workspace, IPC handlers and the
 /// 60 Hz surveillance runtime.
@@ -25,12 +29,31 @@ pub fn run() {
     let engine = Arc::new(std::sync::Mutex::new(SurveillanceEngine::new(
         Default::default(),
     )));
+    let replay: SharedReplay = Arc::new(Mutex::new(None));
+    let osint_cfg = Arc::new(Mutex::new(OsintConfig::default()));
+    let osint_cache = Arc::new(Mutex::new(Vec::new()));
+
+    // Spawn OSINT poller
+    {
+        let cfg = osint_cfg.clone();
+        let cache = osint_cache.clone();
+        tauri::async_runtime::spawn(crate::commands::osint_cmd::osint_poller(cfg, cache));
+    }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppShared::new(engine.clone()))
-        .setup(move |app| {
-            runtime::start(app.handle().clone(), engine.clone());
-            Ok(())
+        .manage(replay.clone())
+        .manage(osint_cfg.clone())
+        .manage(osint_cache.clone())
+        .setup({
+            let engine = engine.clone();
+            let replay = replay.clone();
+            let osint_cache = osint_cache.clone();
+            move |app| {
+                runtime::start(app.handle().clone(), engine.clone(), replay.clone(), osint_cache.clone());
+                Ok(())
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::telemetry_cmd::get_latest_snapshot,
@@ -45,6 +68,11 @@ pub fn run() {
             commands::defense_cmd::create_geofence,
             commands::defense_cmd::toggle_geofence,
             commands::defense_cmd::compute_intercept,
+            commands::replay_cmd::replay_load,
+            commands::replay_cmd::replay_control,
+            commands::replay_cmd::replay_status,
+            commands::osint_cmd::osint_set_config,
+            commands::osint_cmd::osint_status,
         ])
         .run(tauri::generate_context!())
         .expect("AeroPulse-NG runtime terminated unexpectedly");

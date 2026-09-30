@@ -1,6 +1,8 @@
 //! Shared application state for Tauri IPC handlers.
 
 pub mod defense_cmd;
+pub mod osint_cmd;
+pub mod replay_cmd;
 pub mod telemetry_cmd;
 pub mod weather_cmd;
 

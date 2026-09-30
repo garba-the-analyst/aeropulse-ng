@@ -450,6 +450,38 @@ DecodedMessage::GroundRelay { message, .. } => {
         }
     }
 
+    pub fn ingest_replay(&mut self, samples: Vec<crate::hardware::replay::ReplaySample>, now_ms: u64) {
+        for s in samples {
+            let icao_key = s.icao24.to_uppercase();
+            let ts = self.tracks.entry(icao_key.clone()).or_insert_with(|| {
+                let mut t = TrackState::new(now_ms);
+                t.callsign = s.callsign.clone();
+                t.class = if s.callsign.starts_with("NAF") || s.callsign.starts_with("NGA") {
+                    TrackClass::Military
+                } else {
+                    TrackClass::Civil
+                };
+                t
+            });
+            // Update from replay sample — bypass decoder, feed EKF directly
+            let (x_m, y_m) = self.cfg.site.to_local(s.latitude, s.longitude);
+            // Seed or fuse position
+            if !ts.ekf.is_initialised() {
+                ts.ekf.seed_position(x_m, y_m, s.altitude_ft, now_ms as f64 / 1000.0);
+            } else {
+                ts.ekf.fuse_position(x_m, y_m, s.altitude_ft, now_ms as f64 / 1000.0);
+            }
+            if s.ground_speed_kt > 0.0 {
+                ts.ekf.fuse_velocity(s.ground_speed_kt, s.course_deg, 0.0, now_ms as f64 / 1000.0);
+            }
+            ts.callsign = if s.callsign.is_empty() { ts.callsign.clone() } else { s.callsign.clone() };
+            ts.last_position_ms = now_ms;
+            ts.squawk = s.squawk.clone();
+            ts.last_baro_altitude_ft = Some(s.altitude_ft);
+            ts.mode_s_capable = true;
+        }
+    }
+
     // ------------------------------------------------------------------
     // Tick
     // ------------------------------------------------------------------

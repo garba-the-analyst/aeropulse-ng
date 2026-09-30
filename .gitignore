@@ -18,6 +18,13 @@ __pycache__/
 *.duckdb.wal
 *.log
 
+# Raw RF archives — local only, never commit (canonical: acas.csv.gz, operations.csv.gz)
+datasources/
+data/real/
+*.csv.gz
+*.csv
+*.zip
+
 # OS / editor
 .DS_Store
 Thumbs.db

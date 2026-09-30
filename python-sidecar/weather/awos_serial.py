@@ -122,6 +122,7 @@ class AwosSerialReader:
         self._simulate = simulate if simulate is not None else (_pyserial is None)
         self._port = None
         self._rng = random.Random(20260826)
+        self._sim_cycles = 0
 
         # Synthetic mast state (Kano harmattan afternoon baseline).
         self._qnh = 1013.2
@@ -182,8 +183,14 @@ class AwosSerialReader:
             return None
 
     def _simulate_probe(self) -> None:
-        # Re-probe occasionally rather than every tick.
-        self._simulate = True
+        # Re-probe hardware every ~6 cycles instead of latching synthetic forever.
+        self._sim_cycles += 1
+        if self._sim_cycles >= 6:
+            self._sim_cycles = 0
+            self._simulate = False
+            self._close_port()
+        else:
+            self._simulate = True
 
     def _close_port(self) -> None:
         try:

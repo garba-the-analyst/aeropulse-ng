@@ -37,6 +37,12 @@ class DuckDbEngine:
                 )
             except Exception:
                 pass
+        try:
+            self._con.execute(
+                "ALTER TABLE weather_observations ADD COLUMN IF NOT EXISTS wind_gust_kt DOUBLE"
+            )
+        except Exception:
+            pass
 
     def close(self) -> None:
         try:
@@ -177,30 +183,41 @@ class DuckDbEngine:
         qnh_hpa: float | None = None,
         wind_dir_deg: float | None = None,
         wind_speed_kt: float | None = None,
+        wind_gust_kt: float | None = None,
         temperature_c: float | None = None,
         dewpoint_c: float | None = None,
         visibility_m: float | None = None,
         raw_text: str | None = None,
     ) -> int:
-        self._con.execute(
-            """
-            INSERT INTO weather_observations (
-                observed_ms, source, qnh_hpa, wind_dir_deg, wind_speed_kt,
-                temperature_c, dewpoint_c, visibility_m, raw_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                observed_ms,
-                source,
-                qnh_hpa,
-                wind_dir_deg,
-                wind_speed_kt,
-                temperature_c,
-                dewpoint_c,
-                visibility_m,
-                raw_text,
-            ),
-        )
+        self._con.execute("BEGIN")
+        try:
+            self._con.execute(
+                """
+                INSERT INTO weather_observations (
+                    observed_ms, source, qnh_hpa, wind_dir_deg, wind_speed_kt,
+                    wind_gust_kt, temperature_c, dewpoint_c, visibility_m, raw_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observed_ms,
+                    source,
+                    qnh_hpa,
+                    wind_dir_deg,
+                    wind_speed_kt,
+                    wind_gust_kt,
+                    temperature_c,
+                    dewpoint_c,
+                    visibility_m,
+                    raw_text,
+                ),
+            )
+            self._con.execute("COMMIT")
+        except Exception:
+            try:
+                self._con.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
         return 1
 
     # -- readers -----------------------------------------------------------

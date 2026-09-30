@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::engine::SurveillanceEngine;
+use crate::commands::osint_cmd::SharedOsintCache;
+use crate::hardware::replay::SharedReplay;
 use crate::hardware::simulator::{IngestEvent, Simulator, SimulatorConfig};
 use crate::sidecar::{encode_log_tracks, spawn as spawn_sidecar, SidecarConfig, SidecarEvent, SidecarHandle};
 
@@ -15,7 +17,12 @@ use crate::sidecar::{encode_log_tracks, spawn as spawn_sidecar, SidecarConfig, S
 pub const EVT_SNAPSHOT: &str = "telemetry://snapshot";
 
 /// Launches the surveillance loop against the provided windows.
-pub fn start(app: AppHandle, engine: Arc<Mutex<SurveillanceEngine>>) {
+pub fn start(
+    app: AppHandle,
+    engine: Arc<Mutex<SurveillanceEngine>>,
+    replay: SharedReplay,
+    osint_cache: SharedOsintCache,
+) {
     tauri::async_runtime::spawn(async move {
         let mut sim = Simulator::new(SimulatorConfig::default());
         let (sidecar, mut sidecar_rx): (
@@ -63,15 +70,27 @@ pub fn start(app: AppHandle, engine: Arc<Mutex<SurveillanceEngine>>) {
                         Some(SidecarEvent::Failed(msg)) => {
                             eprintln!("[sidecar] {msg}");
                         }
+                        Some(SidecarEvent::Error { cmd, message }) => {
+                            eprintln!("[sidecar] error cmd={cmd}: {message}");
+                        }
                         None => {/* channel closed; keep looping */}
                     }
                 }
                 _ = ticker.tick() => {
                     let events: Vec<IngestEvent> = sim.tick(1.0/60.0, sim_ms);
+                    // Drain replay/OSINT wired to engine now_ms (deterministic, not Instant::now())
+                    let replay_samples = crate::commands::replay_cmd::drain_replay_at(&replay, sim_ms);
+                    let osint_samples = crate::commands::osint_cmd::drain_osint(&osint_cache);
                     sim_ms = sim_ms.saturating_add(1000/60);
 
                     let snapshot = {
                         let mut e = match engine.lock() { Ok(g)=>g, Err(p)=>p.into_inner() };
+                        if !replay_samples.is_empty() {
+                            e.ingest_replay(replay_samples, sim_ms);
+                        }
+                        if !osint_samples.is_empty() {
+                            e.ingest_replay(osint_samples, sim_ms);
+                        }
                         e.ingest(&events, sim_ms);
                         e.tick(sim_ms)
                     };

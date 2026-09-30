@@ -58,7 +58,7 @@ def _opt_float_msg(value) -> float | None:
         return None
 
 
-def start_awos_thread(interval_s: float = 10.0) -> threading.Event:
+def start_awos_thread(interval_s: float = 10.0, device: str | None = None) -> threading.Event:
     """Spawns the AWOS reader; returns a stop event handle."""
 
     stop = threading.Event()
@@ -74,6 +74,7 @@ def start_awos_thread(interval_s: float = 10.0) -> threading.Event:
         callback=on_observation,
         stop_event=stop,
         poll_interval_s=interval_s,
+        device=device,
     )
     thread = threading.Thread(target=reader.run_forever, name="awos-reader", daemon=True)
     thread.start()
@@ -99,22 +100,26 @@ def main() -> None:
                 msg = json.loads(line)
             except json.JSONDecodeError as exc:
                 log_error(f"unparseable frame: {exc}")
+                emit({"ev": "error", "cmd": "unknown", "message": f"unparseable frame: {exc}"})
                 continue
 
             cmd = msg.get("cmd")
 
             if cmd == "init":
                 try:
-                    engine = DuckDbEngine(args.db)
+                    # Honor per-message db_path (NDAiE fix: was ignoring init.db_path
+                    # and always using CLI --db). Fall back to CLI default.
+                    db_path = str(msg.get("db_path") or args.db)
+                    engine = DuckDbEngine(db_path)
                     engine.initialise_schema()
                     if awos_stop is None:
-                        awos_stop = start_awos_thread()
+                        awos_stop = start_awos_thread(device=args.serial)
                     emit({"ev": "ready"})
                 except Exception as exc:
                     log_error(f"init failed: {exc}")
                     # Persistence is optional; AWOS still runs.
                     if awos_stop is None:
-                        awos_stop = start_awos_thread()
+                        awos_stop = start_awos_thread(device=args.serial)
                     emit({"ev": "ready"})
 
             elif cmd == "log_tracks":
@@ -153,6 +158,7 @@ def main() -> None:
                         qnh_hpa=_opt_float_msg(msg.get("qnh_hpa")),
                         wind_dir_deg=_opt_float_msg(msg.get("wind_dir_deg")),
                         wind_speed_kt=_opt_float_msg(msg.get("wind_speed_kt")),
+                        wind_gust_kt=_opt_float_msg(msg.get("wind_gust_kt")),
                         temperature_c=_opt_float_msg(msg.get("temperature_c")),
                         dewpoint_c=_opt_float_msg(msg.get("dewpoint_c")),
                         visibility_m=_opt_float_msg(msg.get("visibility_m")),

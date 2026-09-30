@@ -182,7 +182,10 @@ impl RStarTree {
         path.push(self.root);
 
         loop {
-            let cur = *path.last().unwrap();
+            let cur = match path.last() {
+                Some(v) => *v,
+                None => return,
+            };
             let node = &self.nodes[cur];
             if node.leaf {
                 break;
@@ -191,7 +194,10 @@ impl RStarTree {
             path.push(best);
         }
 
-        let leaf = *path.last().unwrap();
+        let leaf = match path.last() {
+            Some(v) => *v,
+            None => return,
+        };
         self.nodes[leaf].entries.push(entry);
         self.tighten_ancestors(&path[..path.len() - 1]);
         self.handle_overflow(&path, reinserted);

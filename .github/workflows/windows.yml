@@ -39,6 +39,17 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Rust tests (engine, air-gap default)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+
+      - name: Python sidecar tests
+        run: |
+          pip install duckdb pyserial pytest
+          python -m pytest python-sidecar/tests -q
+
       - name: Build frontend
         run: npm run build
 

@@ -13,6 +13,88 @@ function frequencyForIcao(icao24: string): string {
   return `${(khz/1000).toFixed(3)}`;
 }
 
+// Top-level so React state survives parent re-renders (previously defined
+// inside HudApp and remounted on every render). Uses invokeSafe with an
+// air-gap offline label — OSINT defaults OFF per NDAiE contract.
+function ReplayOsintBar() {
+  const [replayPath, setReplayPath] = useState("datasources/acas.csv.gz");
+  const [replaySpeed, setReplaySpeed] = useState(1);
+  const [replayStatus, setReplayStatus] = useState("idle");
+  const [osintEnabled, setOsintEnabled] = useState(false);
+  const [osintStatus, setOsintStatus] = useState("offline (air-gap default)");
+  const [src, setSrc] = useState<"sim" | "live">(() => {
+    try { return (localStorage.getItem("ap-telemetry-source") as "sim" | "live") || "sim"; } catch { return "sim"; }
+  });
+  const [liveAvail, setLiveAvail] = useState(false);
+  const invoke = async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+    const { invokeSafe } = await import("./lib/ipc");
+    const res = await invokeSafe<string>(cmd, args);
+    if (res !== null) return res;
+    if (cmd === "replay_load") return `browser: set ${(args as Record<string, unknown>)?.path}`;
+    if (cmd === "replay_control") return `browser: speed ${(args as Record<string, unknown>)?.speed}`;
+    if (cmd === "osint_set_config") return `browser: osint ${JSON.stringify(args)} (air-gap: live fetch disabled)`;
+    return "";
+  };
+  const browse = async () => {
+    try {
+      const mod = await import("@tauri-apps/plugin-dialog");
+      const sel = await (mod as unknown as { open: (opts: unknown) => Promise<string | null> }).open({
+        filters: [{ name: "Replay", extensions: ["csv", "gz", "json", "tar"] }],
+        multiple: false,
+        directory: false,
+      });
+      if (typeof sel === "string" && sel) setReplayPath(sel);
+    } catch {
+      // browser fallback: keep select
+    }
+  };
+  const loadReplay = async () => {
+    try {
+      const res = await invoke("replay_load", { path: replayPath, speed: replaySpeed });
+      setReplayStatus(String(res));
+    } catch (e) { setReplayStatus(String(e)); }
+  };
+  const setPaused = async (p: boolean) => {
+    try { const r = await invoke("replay_control", { paused: p }); setReplayStatus(String(r)); } catch (e) { setReplayStatus(String(e)); }
+  };
+  const setSpeed = async (s: number) => {
+    setReplaySpeed(s);
+    try { const r = await invoke("replay_control", { speed: s }); setReplayStatus(String(r)); } catch (e) { setReplayStatus(String(e)); }
+  };
+  const toggleOsint = async () => {
+    const next = !osintEnabled;
+    setOsintEnabled(next);
+    try {
+      const r = await invoke("osint_set_config", { cfg: { enabled: next, source: "opensky", bbox: [4, 2.5, 14, 15], poll_interval_s: 10 } });
+      setOsintStatus(String(r));
+    } catch (e) { setOsintStatus(String(e)); }
+  };
+  return (
+    <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px 12px", background: "var(--ap-panel)", borderBottom: "1px solid var(--ap-border)", flexWrap: "wrap" }}>
+      <span style={{ fontFamily: "var(--ap-font-mono)", fontSize: "10px", color: "var(--ap-text-dim)", letterSpacing: "0.06em" }}>REPLAY</span>
+      <select value={replayPath} onChange={e => setReplayPath(e.target.value)} style={{ fontSize: "11px", padding: "4px 6px" }}>
+        <option value="datasources/acas.csv.gz">acas.csv.gz (DF17 raw + pos — real-time)</option>
+        <option value="datasources/operations.csv.gz">operations.csv.gz (events)</option>
+        <option value="datasources/acas (1).csv.gz">acas (1).csv.gz</option>
+        <option value="datasources/ax_arrivals_20260101.csv">ax_arrivals_20260101.csv</option>
+      </select>
+      <button onClick={browse} style={{ fontSize: "11px", padding: "4px 8px" }}>Browse…</button>
+      <button onClick={loadReplay} style={{ fontSize: "11px", padding: "4px 8px" }}>Load & Play</button>
+      <button onClick={() => setPaused(true)} style={{ fontSize: "11px", padding: "4px 8px" }}>Pause</button>
+      <button onClick={() => setPaused(false)} style={{ fontSize: "11px", padding: "4px 8px" }}>Resume</button>
+      <select value={replaySpeed} onChange={e => setSpeed(Number(e.target.value))} style={{ fontSize: "11px", padding: "4px 6px" }}>
+        <option value={0.5}>0.5×</option><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option>
+      </select>
+      <span style={{ fontSize: "10px", color: "var(--ap-text-dim)" }}>{replayStatus}</span>
+      <span style={{ width: "1px", height: "16px", background: "var(--ap-border)", margin: "0 4px" }} />
+      <span style={{ fontFamily: "var(--ap-font-mono)", fontSize: "10px", color: "var(--ap-text-dim)", letterSpacing: "0.06em" }}>OSINT (air-gap: off)</span>
+      <button onClick={toggleOsint} style={{ fontSize: "11px", padding: "4px 8px", background: osintEnabled ? "var(--ap-accent-soft)" : undefined }}>{osintEnabled ? "Online" : "Offline"}</button>
+      <span style={{ fontSize: "10px", color: "var(--ap-text-dim)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{osintStatus}</span>
+      <span style={{ fontSize: "9px", color: "var(--ap-text-faint)", marginLeft: "auto" }}>Simulator parallel • RTL-SDR capture separate</span>
+    </div>
+  );
+}
+
 export default function HudApp() {
   const validSections = ["strips","detail","weather","alerts","comms","system"];
   const getHashPanel = () => {
@@ -255,6 +337,9 @@ export default function HudApp() {
             </button>
           ))}
         </nav>
+      )}
+      {!isSinglePanel && (
+        <ReplayOsintBar />
       )}
       <div
         ref={hudBodyRef}

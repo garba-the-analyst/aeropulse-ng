@@ -339,3 +339,188 @@ pub fn sample_to_track(s: &ReplaySample) -> Track {
         last_baro_altitude_ft: Some(s.altitude_ft),
     }
 }
+
+// ---- Real-time playback controller ------------------------------------------
+
+use std::sync::{Arc, Mutex};
+
+/// Controls real-time replay of a pre-recorded file. Sorts by timestamp and
+/// emits at engine wall-clock `now_ms` speed (1.0 = real-time, 2.0 = 2×, 0.5 = half).
+/// This keeps STCA 120s lookahead and EKF `now_ms` deterministic.
+pub struct ReplayController {
+    samples: Vec<ReplaySample>,
+    index: usize,
+    start_engine_ms: Option<u64>,
+    start_timestamp_ms: u64,
+    speed: f64,
+    paused: bool,
+}
+
+impl ReplayController {
+    pub fn new(samples: Vec<ReplaySample>, speed: f64) -> Self {
+        let mut sorted = samples;
+        sorted.sort_by_key(|s| s.timestamp_ms);
+        let start_ts = sorted.first().map(|s| s.timestamp_ms).unwrap_or(0);
+        Self {
+            samples: sorted,
+            index: 0,
+            start_engine_ms: None,
+            start_timestamp_ms: start_ts,
+            speed: speed.max(0.1),
+            paused: false,
+        }
+    }
+
+    pub fn set_speed(&mut self, speed: f64) {
+        self.speed = speed.max(0.1);
+        self.start_engine_ms = None; // resync on next tick
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        if !paused {
+            self.start_engine_ms = None;
+        }
+    }
+
+    /// Tick wired to engine `now_ms` (60 Hz `sim_ms`), not `Instant::now()`.
+    pub fn tick_at(&mut self, now_ms: u64) -> Vec<ReplaySample> {
+        if self.paused || self.samples.is_empty() {
+            return vec![];
+        }
+        if self.start_engine_ms.is_none() {
+            self.start_engine_ms = Some(now_ms);
+            if let Some(first) = self.samples.get(self.index) {
+                self.start_timestamp_ms = first.timestamp_ms;
+            }
+        }
+        let start_ms = match self.start_engine_ms {
+            Some(v) => v,
+            None => return vec![],
+        };
+        let elapsed = now_ms.saturating_sub(start_ms);
+        let scaled_elapsed = (elapsed as f64 * self.speed) as u64;
+        let target_ts = self.start_timestamp_ms + scaled_elapsed;
+
+        let mut out = Vec::new();
+        while self.index < self.samples.len() && self.samples[self.index].timestamp_ms <= target_ts {
+            out.push(self.samples[self.index].clone());
+            self.index += 1;
+        }
+        out
+    }
+
+    /// Backward-compat wall-clock tick (uses `Instant::now()` → `now_ms`).
+    pub fn tick(&mut self, now: std::time::Instant) -> Vec<ReplaySample> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let _ = now;
+        self.tick_at(now_ms)
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.index >= self.samples.len()
+    }
+
+    pub fn progress(&self) -> f64 {
+        if self.samples.is_empty() {
+            1.0
+        } else {
+            self.index as f64 / self.samples.len() as f64
+        }
+    }
+}
+
+/// Global replay controller (Tauri state).
+pub type SharedReplay = Arc<Mutex<Option<ReplayController>>>;
+
+// ---- OSINT (online, no hardware) --------------------------------------------
+
+/// OSINT source — fetches decoded state vectors from open APIs when online.
+/// This is *online* and *not* air-gapped; it is an alternative to RTL-SDR hardware.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OsintConfig {
+    pub enabled: bool,
+    pub source: String, // "opensky" | "adsblol" | "adsbx"
+    pub bbox: [f64; 4], // [lamin, lomin, lamax, lomax] — e.g. Nigeria FIR
+    pub poll_interval_s: u64,
+}
+
+impl Default for OsintConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            source: "opensky".to_string(),
+            bbox: [4.0, 2.5, 14.0, 15.0], // Nigeria approx
+            poll_interval_s: 10,
+        }
+    }
+}
+
+/// Fetch from OpenSky Network REST API (no key, anonymous, rate-limited).
+/// Returns `ReplaySample`s for direct Track injection. Call from a `tokio::spawn` loop.
+///
+/// ONLINE-ONLY: compiled only with `osint-live` feature. Default air-gap
+/// builds return an explanatory error instead of touching the network.
+#[cfg(feature = "osint-live")]
+pub async fn fetch_opensky(bbox: [f64; 4]) -> Result<Vec<ReplaySample>, String> {
+    let url = format!(
+        "https://opensky-network.org/api/states/all?lamin={}&lomin={}&lamax={}&lomax={}",
+        bbox[0], bbox[1], bbox[2], bbox[3]
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "AeroPulse-NG/2.4")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("OpenSky HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let states = v.get("states").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut out = Vec::new();
+    for s in states {
+        if let Some(arr) = s.as_array() {
+            // OpenSky state vector: [icao24, callsign, origin_country, time_pos, last_contact, lon, lat, baro_alt, on_ground, velocity, true_track, vertical_rate, sensors, geo_alt, squawk, spi, pos_src]
+            let icao = arr.get(0).and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase();
+            let callsign = arr.get(1).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let lon = arr.get(5).and_then(|v| v.as_f64());
+            let lat = arr.get(6).and_then(|v| v.as_f64());
+            let alt = arr.get(7).and_then(|v| v.as_f64());
+            let (lat, lon) = match (lat, lon) {
+                (Some(la), Some(lo)) => (la, lo),
+                _ => continue,
+            };
+            if icao.is_empty() {
+                continue;
+            }
+            out.push(ReplaySample {
+                icao24: icao,
+                callsign,
+                latitude: lat,
+                longitude: lon,
+                altitude_ft: alt.unwrap_or(0.0) * 3.28084,
+                ground_speed_kt: arr.get(9).and_then(|v| v.as_f64()).unwrap_or(0.0) * 1.94384,
+                course_deg: arr.get(10).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                squawk: arr.get(14).and_then(|v| v.as_str()).unwrap_or("----").to_string(),
+                timestamp_ms: now,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Offline stub when `osint-live` is disabled (default air-gap build).
+/// Preserves the type signature so `osint_cmd` compiles without network deps.
+#[cfg(not(feature = "osint-live"))]
+pub async fn fetch_opensky(_bbox: [f64; 4]) -> Result<Vec<ReplaySample>, String> {
+    Err("OSINT live fetch disabled in air-gap build (enable feature `osint-live`)".into())
+}

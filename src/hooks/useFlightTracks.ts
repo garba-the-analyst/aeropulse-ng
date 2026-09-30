@@ -15,13 +15,81 @@ let latest: EngineSnapshot | null = null;
 const listeners = new Set<() => void>();
 let started = false;
 
+// ---------------------------------------------------------------------------
+// Data source selection: sim (default) vs live engine.
+// Simulator runs by default so the HUD is never empty; operator switches
+// to Live / Replay / OSINT manually. Persisted per-window via localStorage.
+// ---------------------------------------------------------------------------
+
+export type TelemetrySource = "sim" | "live";
+
+const SOURCE_KEY = "ap-telemetry-source";
+
+function loadSource(): TelemetrySource {
+  try {
+    const v = localStorage.getItem(SOURCE_KEY);
+    if (v === "live" || v === "sim") return v;
+  } catch { /* ignore */ }
+  return "sim";
+}
+
+let source: TelemetrySource = typeof window !== "undefined" ? loadSource() : "sim";
+let simLatest: EngineSnapshot | null = null;
+let liveLatest: EngineSnapshot | null = null;
+const sourceListeners = new Set<() => void>();
+
+export function getSource(): TelemetrySource {
+  return source;
+}
+
+export function hasLiveData(): boolean {
+  return liveLatest !== null;
+}
+
+export function setSource(next: TelemetrySource): void {
+  source = next;
+  try { localStorage.setItem(SOURCE_KEY, next); } catch { /* ignore */ }
+  latest = next === "live" ? (liveLatest ?? simLatest) : simLatest;
+  for (const cb of listeners) cb();
+  for (const cb of sourceListeners) cb();
+}
+
+export function useTelemetrySource(): { source: TelemetrySource; hasLive: boolean } {
+  const [s, setS] = useState<TelemetrySource>(getSource());
+  const [hasLive, setHasLive] = useState(hasLiveData());
+  useEffect(() => {
+    const cb = () => { setS(getSource()); setHasLive(hasLiveData()); };
+    sourceListeners.add(cb);
+    listeners.add(cb);
+    return () => { sourceListeners.delete(cb); listeners.delete(cb); };
+  }, []);
+  return { source: s, hasLive };
+}
+
 export function getSnapshot(): EngineSnapshot | null {
   return latest;
 }
 
+function publishSim(next: EngineSnapshot): void {
+  simLatest = next;
+  if (source === "sim" || liveLatest === null) {
+    latest = next;
+    for (const cb of listeners) cb();
+  }
+  for (const cb of sourceListeners) cb();
+}
+
+function publishLive(next: EngineSnapshot): void {
+  liveLatest = next;
+  if (source === "live") {
+    latest = next;
+    for (const cb of listeners) cb();
+  }
+  for (const cb of sourceListeners) cb();
+}
+
 function publish(next: EngineSnapshot): void {
-  latest = next;
-  for (const cb of listeners) cb();
+  publishLive(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -173,21 +241,28 @@ function demoSnapshot(tMs: number): EngineSnapshot {
 }
 
 function startDemoFeed(): void {
+  // Simulator is the default source — always running, even under Tauri.
+  // Live engine / replay / OSINT are manual opt-ins via setSource() or
+  // the ReplayOsintBar; the Rust engine keeps running in parallel.
+  if (simLatest === null) {
+    publishSim(demoSnapshot(Date.now()));
+  } else if (source === "sim") {
+    latest = simLatest;
+  }
   const timer = setInterval(() => {
-    publish(demoSnapshot(Date.now()));
+    publishSim(demoSnapshot(Date.now()));
   }, 50); // 20 Hz — plenty for UI panels
   // Never stop; dev-page lifecycle only.
   void timer;
 }
 
-/** Idempotent boot of the telemetry stream (Tauri event or demo feed). */
+/** Idempotent boot of the telemetry stream (sim by default + live if Tauri). */
 export async function startTelemetry(): Promise<void> {
   if (started) return;
   started = true;
+  startDemoFeed();
   if (isTauri()) {
-    await listenSafe<EngineSnapshot>(EVT_SNAPSHOT, publish);
-  } else {
-    startDemoFeed();
+    await listenSafe<EngineSnapshot>(EVT_SNAPSHOT, publishLive);
   }
 }
 

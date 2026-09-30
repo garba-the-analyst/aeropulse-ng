@@ -26,13 +26,16 @@ pub fn create_geofence(
     if vertices_deg.len() < 3 {
         return Err("geofence requires at least three vertices".into());
     }
-    let id = format!(
-        "GF-{:04}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| (d.as_millis() % 10_000) as u16)
-            .unwrap_or(0)
-    );
+    // Monotonic counter + wall-clock millis avoids GF-%04 collisions when two
+    // fences are created within the same 10 s window (previous millis%10000).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static GF_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = GF_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let id = format!("GF-{:04}-{:04}", (now_ms % 10_000) as u16, (seq % 10_000) as u16);
     let fence = Geofence {
         id: id.clone(),
         name,

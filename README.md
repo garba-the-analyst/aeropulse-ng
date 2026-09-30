@@ -172,10 +172,11 @@ aeropulse-ng/
 
 ```bash
 ./scripts/verify.sh          # full battery — counts generated dynamically:
-                             #   e.g. Rust 108 · Python 21 · tsc strict · vite build (129 total)
-npm run engine:test          # Rust only (cargo test --no-default-features)
+                             #   e.g. Rust 109 · Python 21 · tsc strict · vite build (130 engine+sidecar + 23 frontend)
+npm run engine:test          # Rust only (cargo test --no-default-features, air-gap default; add --features osint-live for online OSINT)
 npm run sidecar:test         # pytest only
 npm run typecheck            # TypeScript only
+npm run test                 # vitest frontend (units, FDB, audio panel)
 ```
 
 Test coverage highlights: CRC-24 against published reference frames, CPR global

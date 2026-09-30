@@ -2,12 +2,21 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+// Vite 8 warns `__dirname` is unsupported under future native loader, but the
+// classic loader (current default) still shims it to the real src/ dir while
+// import.meta.url points at a .vite-temp copy. Keep __dirname for correct
+// resolution; suppress the future-loader warning via env in package.json.
+declare const __dirname: string;
+process.env.VITE_CONFIG_NATIVE_IGNORE_WARNING ??= "true";
+
 const host = process.env.TAURI_DEV_HOST;
+
+const dirname: string = __dirname;
 
 export default defineConfig({
   // Config is location-independent: Tauri invokes it via the root
   // package.json scripts while assets live beside the sources.
-  root: __dirname,
+  root: dirname,
   plugins: [react()],
   // vitest config — cast to any to avoid vite/vitest type duel (vite 8 vs vitest 3)
   ...( {
@@ -18,7 +27,7 @@ export default defineConfig({
     },
   } as any),
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: { "@": path.resolve(dirname, "./src") },
   },
   // Tauri dev-server hardening: bind strictly, no browser auto-open.
   clearScreen: false,
@@ -39,12 +48,12 @@ export default defineConfig({
       process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
     minify: process.env.TAURI_ENV_DEBUG ? false : true,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
-    outDir: path.resolve(__dirname, "../dist"),
+    outDir: path.resolve(dirname, "../dist"),
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, "index.html"),
-        hud: path.resolve(__dirname, "hud.html"),
+        main: path.resolve(dirname, "index.html"),
+        hud: path.resolve(dirname, "hud.html"),
       },
     },
   },

@@ -46,10 +46,43 @@ impl Default for SidecarConfig {
         Self {
             enabled: true,
             python_bin: "python3".into(),
+            // Resolved at spawn time against CWD, manifest dir, and Tauri
+            // resource dir — relative default kept for bench `cargo test`.
             script_path: "python-sidecar/main.py".into(),
             db_path: "aeropulse.duckdb".into(),
         }
     }
+}
+
+/// Resolves the sidecar script against likely roots so a bundled/installed
+/// binary does not depend on the developer checkout CWD.
+pub fn resolve_script_path(configured: &str) -> String {
+    use std::path::Path;
+    let p = Path::new(configured);
+    if p.is_absolute() && p.exists() {
+        return configured.to_string();
+    }
+    // 1. As given (CWD-relative, bench default).
+    if p.exists() {
+        return configured.to_string();
+    }
+    // 2. Relative to src-tauri/ manifest dir (../python-sidecar/main.py).
+    let manifest_rel = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../")
+        .join(configured);
+    if manifest_rel.exists() {
+        return manifest_rel.to_string_lossy().into_owned();
+    }
+    // 3. Tauri resource dir layout (resources/python-sidecar/main.py).
+    for candidate in [
+        format!("resources/{configured}"),
+        "/usr/lib/aeropulse-ng/python-sidecar/main.py".to_string(),
+    ] {
+        if Path::new(&candidate).exists() {
+            return candidate;
+        }
+    }
+    configured.to_string()
 }
 
 /// Messages routed from the sidecar reader into the engine loop.
@@ -59,6 +92,7 @@ pub enum SidecarEvent {
     Awos(AwosObservation),
     DbAck { rows: u64 },
     Failed(String),
+    Error { cmd: String, message: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +199,7 @@ pub enum SidecarFrame {
     Ready,
     Awos(AwosObservation),
     DbAck { rows: u64 },
+    Error { cmd: String, message: String },
 }
 
 /// Parses one inbound NDJSON line.
@@ -177,6 +212,9 @@ pub fn parse_line(line: &str) -> Option<SidecarEvent> {
         Ok(SidecarFrame::Ready) => Some(SidecarEvent::Ready),
         Ok(SidecarFrame::Awos(obs)) => Some(SidecarEvent::Awos(obs)),
         Ok(SidecarFrame::DbAck { rows }) => Some(SidecarEvent::DbAck { rows }),
+        Ok(SidecarFrame::Error { cmd, message }) => {
+            Some(SidecarEvent::Error { cmd, message })
+        }
         Err(e) => Some(SidecarEvent::Failed(format!("bad frame: {e}"))),
     }
 }
@@ -212,8 +250,10 @@ pub async fn spawn(cfg: &SidecarConfig) -> Option<(SidecarHandle, mpsc::Receiver
         return None;
     }
 
+    let script = resolve_script_path(&cfg.script_path);
+    // Log stderr lines instead of dropping them — aids field diagnosis.
     let mut child = match Command::new(&cfg.python_bin)
-        .arg(&cfg.script_path)
+        .arg(&script)
         .arg("--db")
         .arg(&cfg.db_path)
         .stdin(Stdio::piped())

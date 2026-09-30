@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS weather_observations (
     qnh_hpa       DOUBLE,
     wind_dir_deg  DOUBLE,
     wind_speed_kt DOUBLE,
+    wind_gust_kt  DOUBLE,
     temperature_c DOUBLE,
     dewpoint_c    DOUBLE,
     visibility_m  DOUBLE,

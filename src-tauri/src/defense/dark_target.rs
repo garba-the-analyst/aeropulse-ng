@@ -197,7 +197,9 @@ impl AnomalyDetector {
             .collect();
 
         for (icao, _) in silent_records {
-            let rec = self.records.get_mut(&icao).expect("just filtered");
+            let Some(rec) = self.records.get_mut(&icao) else {
+                continue;
+            };
             if rec.current_alert != Some(AlertState::DarkTarget) {
                 rec.current_alert = Some(AlertState::DarkTarget);
                 changed.push(AnomalyVerdict {
